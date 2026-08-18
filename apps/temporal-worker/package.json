@@ -1,0 +1,37 @@
+{
+  "name": "temporal-worker",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "license": "MIT",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "lint": "tsc --noEmit",
+    "type-check": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@aws-sdk/client-codebuild": "^3.726.0",
+    "@aws-sdk/client-ecr": "^3.726.0",
+    "@aws-sdk/client-ecs": "^3.726.0",
+    "@aws-sdk/client-elastic-load-balancing-v2": "^3.726.0",
+    "@aws-sdk/client-secrets-manager": "^3.726.0",
+    "@shipora/code-analyzer": "workspace:*",
+    "@shipora/db": "workspace:*",
+    "@shipora/github-app": "workspace:*",
+    "@shipora/temporal-workflows": "workspace:*",
+    "@shipora/types": "workspace:*",
+    "@temporalio/activity": "^1.11.7",
+    "@temporalio/worker": "^1.11.7",
+    "@temporalio/workflow": "^1.11.7"
+  },
+  "devDependencies": {
+    "@shipora/config-typescript": "workspace:*",
+    "@types/node": "^22.10.5",
+    "tsx": "^4.19.2",
+    "typescript": "^5.6.3",
+    "vitest": "^2.1.8"
+  }
+}
