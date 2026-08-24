@@ -6,7 +6,13 @@ import { appRouter } from "./trpc/routers/index.js";
 import { createContext } from "./trpc/context.js";
 import { healthRoutes } from "./routes/health.js";
 import { webhookRoutes } from "./routes/webhooks/github.js";
+
 import { githubInstallRoutes } from "./routes/github/install.js";
+import { cloudConnectRoutes } from "./routes/cloud-connect.js";
+import { azureOAuthRoutes } from "./routes/azure-oauth.js";
+import { logRoutes } from "./routes/logs.js";
+import { rollbackRoutes } from "./routes/rollback.js";
+
 
 export async function buildApp(opts?: { logger?: boolean }): Promise<FastifyInstance> {
   const app = Fastify({
@@ -32,6 +38,11 @@ export async function buildApp(opts?: { logger?: boolean }): Promise<FastifyInst
   await app.register(healthRoutes);
   await app.register(webhookRoutes);
   await app.register(githubInstallRoutes);
+  await app.register(cloudConnectRoutes);
+  await app.register(azureOAuthRoutes);
+  // Phase 4 — Observability & Rollback
+  await app.register(logRoutes);
+  await app.register(rollbackRoutes);
 
   // Register tRPC plugin
   await app.register(fastifyTRPCPlugin, {

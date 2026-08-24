@@ -1,7 +1,10 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  transpilePackages: ["@shipora/ui"],
+  output: "standalone",
+  transpilePackages: ["@shipora/ui", "@shipora/types", "@shipora/code-analyzer"],
+  serverExternalPackages: ["@clerk/nextjs"],
 };
 
 export default nextConfig;
+

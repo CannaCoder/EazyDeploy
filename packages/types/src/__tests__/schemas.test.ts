@@ -11,7 +11,10 @@ import {
   ConflictCheckSchema,
   ConflictCheckStatusEnum,
   AuditLogSchema,
+  CloudConnectionSchema,
+  EnvExampleEntrySchema,
 } from "../index.js";
+
 
 describe("UserSchema", () => {
   it("validates a valid user object", () => {
@@ -158,3 +161,66 @@ describe("AuditLogSchema", () => {
     expect(parsed.success).toBe(true);
   });
 });
+
+describe("CloudConnectionSchema & Enums", () => {
+  it("validates AWS cloud connection", () => {
+    const valid = {
+      id: "550e8400-e29b-41d4-a716-446655440006",
+      userId: "550e8400-e29b-41d4-a716-446655440000",
+      provider: "aws",
+      displayName: "My AWS Production",
+      roleArn: "arn:aws:iam::123456789012:role/shipora-deploy-role",
+      externalId: "shipora-ext-12345",
+      status: "connected",
+      createdAt: new Date(),
+    };
+    const parsed = CloudConnectionSchema.safeParse(valid);
+    expect(parsed.success).toBe(true);
+  });
+
+  it("validates Azure cloud connection", () => {
+    const valid = {
+      id: "550e8400-e29b-41d4-a716-446655440007",
+      userId: "550e8400-e29b-41d4-a716-446655440000",
+      provider: "azure",
+      displayName: "My Azure Subscription",
+      tenantId: "tenant-uuid-1234",
+      clientId: "client-uuid-5678",
+      subscriptionId: "sub-uuid-9999",
+      resourceGroup: "shipora-rg",
+      status: "connected",
+      createdAt: new Date(),
+    };
+    const parsed = CloudConnectionSchema.safeParse(valid);
+    expect(parsed.success).toBe(true);
+  });
+
+  it("defaults project cloudProvider to aws", () => {
+    const projectInput = {
+      id: "550e8400-e29b-41d4-a716-446655440001",
+      ownerId: "550e8400-e29b-41d4-a716-446655440000",
+      name: "Acme Platform",
+      githubRepoOwner: "acme-corp",
+      githubRepoName: "platform",
+      githubInstallationId: 987654,
+    };
+    const parsed = ProjectSchema.safeParse(projectInput);
+    expect(parsed.success).toBe(true);
+    if (parsed.success) {
+      expect(parsed.data.cloudProvider).toBe("aws");
+    }
+  });
+
+  it("validates EnvExampleEntrySchema", () => {
+    const entry = {
+      key: "DATABASE_URL",
+      defaultValue: "postgresql://localhost:5432/mydb",
+      description: "Postgres connection string",
+      group: "Database",
+      isRequired: false,
+    };
+    const parsed = EnvExampleEntrySchema.safeParse(entry);
+    expect(parsed.success).toBe(true);
+  });
+});
+

@@ -1,0 +1,36 @@
+{
+  "name": "@shipora/cloud-adapters",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "license": "MIT",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "type-check": "tsc --noEmit",
+    "lint": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@aws-sdk/client-codebuild": "^3.726.0",
+    "@aws-sdk/client-ecr": "^3.726.0",
+    "@aws-sdk/client-ecs": "^3.726.0",
+    "@aws-sdk/client-elastic-load-balancing-v2": "^3.726.0",
+    "@aws-sdk/client-secrets-manager": "^3.726.0",
+    "@aws-sdk/client-sts": "^3.726.0",
+    "@azure/arm-appcontainers": "^3.0.0",
+    "@azure/arm-containerregistry": "^12.0.0",
+    "@azure/arm-keyvault": "^5.0.0",
+    "@azure/arm-resources": "^8.0.0",
+    "@azure/identity": "^4.13.2",
+    "@azure/keyvault-secrets": "^4.11.2",
+    "@shipora/types": "workspace:*"
+  },
+  "devDependencies": {
+    "@shipora/config-typescript": "workspace:*",
+    "@types/node": "^22.10.5",
+    "typescript": "^5.6.3",
+    "vitest": "^2.1.8"
+  }
+}

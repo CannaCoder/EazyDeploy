@@ -16,9 +16,14 @@ export const ServiceSchema = z.object({
   rootPath: z.string().min(1, "Root path is required"),
   port: z.number().int().min(1).max(65535).nullable().optional(),
   buildCommand: z.string().nullable().optional(),
+  // AWS-specific (backward compat)
   ecsServiceArn: z.string().nullable().optional(),
   currentTaskDef: z.string().nullable().optional(),
   previousTaskDef: z.string().nullable().optional(),
+  // Generic cloud provider fields
+  cloudServiceId: z.string().nullable().optional(),
+  currentRevision: z.string().nullable().optional(),
+  previousRevision: z.string().nullable().optional(),
   serviceUrl: z.string().url().nullable().optional(),
   createdAt: z.date().default(() => new Date()),
 });
@@ -34,3 +39,4 @@ export type ServiceType = z.infer<typeof ServiceTypeEnum>;
 export type Service = z.infer<typeof ServiceSchema>;
 export type CreateService = z.infer<typeof CreateServiceSchema>;
 export type UpdateService = z.infer<typeof UpdateServiceSchema>;
+

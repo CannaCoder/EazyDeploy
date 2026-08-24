@@ -4,6 +4,8 @@
 
 export * from "./workflows/conflict-guard.js";
 export * from "./workflows/deploy.js";
+export * from "./workflows/rollback.js";
 export * from "./activities/types.js";
 export * from "./activities/conflict-guard-activities.js";
 export * from "./activities/deploy-activities.js";
+

@@ -33,7 +33,8 @@ export async function provisionECSActivity(
     process.env["NODE_ENV"] === "test" ||
     (!process.env["AWS_ACCESS_KEY_ID"] && !process.env["AWS_PROFILE"])
   ) {
-    const mockTaskDefArn = `arn:aws:ecs:${region}:${accountId}:task-definition/${taskFamily}:1`;
+    const mockTaskDefArn = `arn:aws:ecs:${region}:${accountId}:task-definition/${taskFamily}:2`;
+    const mockPrevTaskDefArn = `arn:aws:ecs:${region}:${accountId}:task-definition/${taskFamily}:1`;
     const mockServiceArn = `arn:aws:ecs:${region}:${accountId}:service/${clusterName}/${ecsServiceName}`;
 
     console.log(
@@ -43,13 +44,17 @@ export async function provisionECSActivity(
     return {
       success: true,
       serviceName: input.serviceName,
+      cloudServiceId: mockServiceArn,
+      currentRevision: mockTaskDefArn,
       taskDefinitionArn: mockTaskDefArn,
       ecsServiceArn: mockServiceArn,
+      previousTaskDefinitionArn: mockPrevTaskDefArn,
     };
   }
 
   try {
     const client = new ECSClient({ region });
+    const secretRefs = input.secretRefs || input.taskEnvSecretRefs || [];
 
     // 1. Register Task Definition
     const registerCmd = new RegisterTaskDefinitionCommand({
@@ -72,9 +77,9 @@ export async function provisionECSActivity(
               protocol: "tcp",
             },
           ],
-          secrets: input.taskEnvSecretRefs.map((ref) => ({
+          secrets: secretRefs.map((ref) => ({
             name: ref.name,
-            valueFrom: ref.valueFrom,
+            valueFrom: ref.valueFrom || ref.reference || "",
           })),
           logConfiguration: {
             logDriver: "awslogs",
@@ -111,8 +116,12 @@ export async function provisionECSActivity(
     );
 
     let ecsServiceArn: string;
+    let previousTaskDefinitionArn: string | undefined;
 
     if (existingService) {
+      // Capture the current task def ARN before updating (used for rollback)
+      previousTaskDefinitionArn = existingService.taskDefinition ?? undefined;
+
       // Update existing service
       console.log(`[provisionECSActivity] Updating existing ECS service '${ecsServiceName}' with new task def...`);
       const updateRes = await client.send(
@@ -154,17 +163,23 @@ export async function provisionECSActivity(
     return {
       success: true,
       serviceName: input.serviceName,
+      cloudServiceId: ecsServiceArn,
+      currentRevision: taskDefArn,
       taskDefinitionArn: taskDefArn,
       ecsServiceArn,
+      previousTaskDefinitionArn,
     };
   } catch (err: unknown) {
     console.error(`[provisionECSActivity] ECS Provisioning Error:`, (err as Error).message);
     return {
       success: false,
       serviceName: input.serviceName,
+      cloudServiceId: "",
+      currentRevision: "",
       taskDefinitionArn: "",
       ecsServiceArn: "",
       error: (err as Error).message,
     };
   }
+
 }

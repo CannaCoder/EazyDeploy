@@ -14,14 +14,31 @@ function loadEnvSafe() {
     if (existsSync(envPath)) {
       try {
         const content = readFileSync(envPath, "utf-8");
-        for (const line of content.split("\n")) {
-          const trimmed = line.trim();
-          if (trimmed && !trimmed.startsWith("#") && trimmed.includes("=")) {
-            const [key, ...rest] = trimmed.split("=");
-            const val = rest.join("=").trim().replace(/^["']|["']$/g, "");
-            if (key && !process.env[key.trim()]) {
-              process.env[key.trim()] = val;
-            }
+
+        // Regex that captures:
+        //   KEY="multi\nline value with = signs"
+        //   KEY='value'
+        //   KEY=plain_value
+        const envRegex = /^([A-Z_][A-Z0-9_]*)=("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|[^\n]*)/gm;
+        let match: RegExpExecArray | null;
+
+        while ((match = envRegex.exec(content)) !== null) {
+          const key = match[1].trim();
+          let val = match[2];
+
+          // Strip surrounding quotes and unescape \n, \t etc inside quoted strings
+          if ((val.startsWith('"') && val.endsWith('"')) ||
+              (val.startsWith("'") && val.endsWith("'"))) {
+            val = val.slice(1, -1)
+              .replace(/\\n/g, "\n")
+              .replace(/\\r/g, "\r")
+              .replace(/\\t/g, "\t")
+              .replace(/\\\\/g, "\\")
+              .replace(/\\"/g, '"');
+          }
+
+          if (key && !process.env[key]) {
+            process.env[key] = val;
           }
         }
       } catch {

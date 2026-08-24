@@ -12,8 +12,11 @@ export const projects = pgTable("projects", {
   githubInstallationId: bigint("github_installation_id", { mode: "number" }).notNull(),
   productionBranch: text("production_branch").notNull().default("main"),
   envSecretArn: text("env_secret_arn"),
+  cloudProvider: text("cloud_provider").notNull().default("aws"),
+  cloudConnectionId: uuid("cloud_connection_id"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
 export type ProjectTable = typeof projects.$inferSelect;
 export type NewProjectTable = typeof projects.$inferInsert;
+

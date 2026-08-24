@@ -80,11 +80,19 @@ export function detectServices(files: (string | RepoFile)[]): DetectedService[] 
       const isFastify = pkgContent?.includes('"fastify"') || rootFiles.some((p) => p.includes("fastify"));
       const isExpress = pkgContent?.includes('"express"') || rootFiles.some((p) => p.includes("express"));
 
+      const dockerfilePath = root === "." ? "Dockerfile" : `${root}/Dockerfile`;
+      const dockerfileContent = fileMap.get(dockerfilePath);
+      let detectedPort = isFastify ? 4000 : isExpress ? 3000 : 3000;
+      if (dockerfileContent) {
+        const match = dockerfileContent.match(/EXPOSE\s+(\d+)/i);
+        if (match) detectedPort = parseInt(match[1], 10);
+      }
+
       services.push({
         name: rootName,
         type: "node",
         rootPath: root,
-        port: isFastify ? 4000 : isExpress ? 3000 : 8080,
+        port: detectedPort,
         buildCommand: root === "." ? "pnpm build" : `pnpm --filter ${rootName} build`,
         envVars: [],
       });
@@ -112,11 +120,19 @@ export function detectServices(files: (string | RepoFile)[]): DetectedService[] 
     // 5. Dockerfile
     const hasDockerfile = rootFiles.some((p) => p.endsWith("Dockerfile"));
     if (hasDockerfile) {
+      const dockerfilePath = root === "." ? "Dockerfile" : `${root}/Dockerfile`;
+      const dockerfileContent = fileMap.get(dockerfilePath);
+      let detectedPort = 3000;
+      if (dockerfileContent) {
+        const match = dockerfileContent.match(/EXPOSE\s+(\d+)/i);
+        if (match) detectedPort = parseInt(match[1], 10);
+      }
+
       services.push({
         name: rootName,
         type: "docker",
         rootPath: root,
-        port: 8080,
+        port: detectedPort,
         buildCommand: `docker build -t ${rootName} ${root}`,
         envVars: [],
       });

@@ -2,9 +2,9 @@
 
 export const dynamic = "force-dynamic";
 
-import React, { use, useState } from "react";
+import React, { useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useParams } from "next/navigation";
 import { trpc } from "../../../../../lib/trpc";
 import {
   Button,
@@ -27,21 +27,23 @@ import {
   Layers,
 } from "lucide-react";
 
-export default function DeploymentsListPage({
-  params,
-}: {
-  params: Promise<{ id: string }>;
-}) {
-  const resolvedParams = use(params);
-  const projectId = resolvedParams.id;
+export default function DeploymentsListPage() {
+  const params = useParams();
+  const projectId = (params?.id as string) || "";
   const router = useRouter();
 
-  const { data: project } = trpc.project.getById.useQuery({ id: projectId });
+  const { data: project } = trpc.project.getById.useQuery(
+    { id: projectId },
+    { enabled: !!projectId }
+  );
   const {
     data: deploymentList,
     isLoading,
     refetch,
-  } = trpc.deployment.list.useQuery({ projectId });
+  } = trpc.deployment.list.useQuery(
+    { projectId },
+    { enabled: !!projectId }
+  );
 
   const triggerMutation = trpc.deployment.trigger.useMutation({
     onSuccess: (data) => {

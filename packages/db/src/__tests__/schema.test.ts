@@ -7,6 +7,7 @@ import {
   deployments,
   conflictChecks,
   auditLogs,
+  cloudConnections,
 } from "../index.js";
 
 describe("Database Schema Definitions", () => {
@@ -31,6 +32,8 @@ describe("Database Schema Definitions", () => {
     expect(cols).toHaveProperty("githubInstallationId");
     expect(cols).toHaveProperty("productionBranch");
     expect(cols).toHaveProperty("envSecretArn");
+    expect(cols).toHaveProperty("cloudProvider");
+    expect(cols).toHaveProperty("cloudConnectionId");
   });
 
   it("defines services table with service tracking columns", () => {
@@ -43,6 +46,9 @@ describe("Database Schema Definitions", () => {
     expect(cols).toHaveProperty("port");
     expect(cols).toHaveProperty("buildCommand");
     expect(cols).toHaveProperty("ecsServiceArn");
+    expect(cols).toHaveProperty("cloudServiceId");
+    expect(cols).toHaveProperty("currentRevision");
+    expect(cols).toHaveProperty("previousRevision");
   });
 
   it("defines deployments table with status and timing", () => {
@@ -75,4 +81,25 @@ describe("Database Schema Definitions", () => {
     expect(cols).toHaveProperty("event");
     expect(cols).toHaveProperty("metadata");
   });
+
+  it("defines cloud_connections table with AWS and Azure columns", () => {
+    const cols = getTableColumns(cloudConnections);
+    expect(cols).toHaveProperty("id");
+    expect(cols).toHaveProperty("userId");
+    expect(cols).toHaveProperty("projectId");
+    expect(cols).toHaveProperty("provider");
+    expect(cols).toHaveProperty("displayName");
+    expect(cols).toHaveProperty("roleArn");
+    expect(cols).toHaveProperty("externalId");
+    expect(cols).toHaveProperty("tenantId");
+    expect(cols).toHaveProperty("clientId");
+    expect(cols).toHaveProperty("clientSecretRef");
+    expect(cols).toHaveProperty("subscriptionId");
+    expect(cols).toHaveProperty("resourceGroup");
+    expect(cols).toHaveProperty("status");
+    expect(cols).toHaveProperty("connectedAt");
+    expect(cols).toHaveProperty("expiresAt");
+    expect(cols).toHaveProperty("lastUsedAt");
+  });
 });
+

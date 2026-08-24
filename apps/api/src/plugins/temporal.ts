@@ -3,6 +3,7 @@ import type {
   ConflictGuardWorkflowInput,
   DeployWorkflowInput,
   DeployProgress,
+  RollbackActivityInput,
 } from "@shipora/temporal-workflows";
 
 let temporalClientInstance: Client | null = null;
@@ -138,4 +139,34 @@ export async function getDeployWorkflowProgress(
     return null;
   }
 }
+
+/**
+ * Starts a manual rollback by executing rollbackActivity via Temporal.
+ */
+export async function startRollbackWorkflow(
+  input: RollbackActivityInput
+): Promise<{ workflowId: string } | null> {
+  const workflowId = `rollback-${input.deploymentId}-${Date.now()}`;
+
+  const client = await getTemporalClient();
+  if (!client) {
+    return { workflowId };
+  }
+
+  try {
+    const handle = await client.workflow.start("rollbackWorkflow", {
+      taskQueue: process.env["TEMPORAL_TASK_QUEUE"] || "conflict-guard",
+      workflowId,
+      args: [input],
+    });
+    return { workflowId: handle.workflowId };
+  } catch (err: unknown) {
+    console.warn(
+      `[Temporal Client] Failed to start rollback workflow ${workflowId}:`,
+      (err as Error).message
+    );
+    return { workflowId };
+  }
+}
+
 

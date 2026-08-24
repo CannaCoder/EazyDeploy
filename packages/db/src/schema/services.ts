@@ -11,12 +11,18 @@ export const services = pgTable("services", {
   rootPath: text("root_path").notNull(),
   port: integer("port"),
   buildCommand: text("build_command"),
+  // AWS specific
   ecsServiceArn: text("ecs_service_arn"),
   currentTaskDef: text("current_task_def"),
   previousTaskDef: text("previous_task_def"),
+  // Generic cloud provider columns
+  cloudServiceId: text("cloud_service_id"),
+  currentRevision: text("current_revision"),
+  previousRevision: text("previous_revision"),
   serviceUrl: text("service_url"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
 export type ServiceTable = typeof services.$inferSelect;
 export type NewServiceTable = typeof services.$inferInsert;
+

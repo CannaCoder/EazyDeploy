@@ -2,8 +2,9 @@
 
 export const dynamic = "force-dynamic";
 
-import React, { use } from "react";
+import React from "react";
 import Link from "next/link";
+import { useParams } from "next/navigation";
 import { trpc } from "../../../../../lib/trpc";
 import {
   Button,
@@ -24,18 +25,18 @@ import {
   RotateCcw,
 } from "lucide-react";
 
-export default function ConflictChecksPage({
-  params,
-}: {
-  params: Promise<{ id: string }>;
-}) {
-  const resolvedParams = use(params);
-  const projectId = resolvedParams.id;
+export default function ConflictChecksPage() {
+  const params = useParams();
+  const projectId = (params?.id as string) || "";
 
-  const { data: project } = trpc.project.getById.useQuery({ id: projectId });
-  const { data: checks, isLoading, refetch } = trpc.conflictCheck.list.useQuery({
-    projectId,
-  });
+  const { data: project } = trpc.project.getById.useQuery(
+    { id: projectId },
+    { enabled: !!projectId }
+  );
+  const { data: checks, isLoading, refetch } = trpc.conflictCheck.list.useQuery(
+    { projectId },
+    { enabled: !!projectId }
+  );
 
   return (
     <div className="space-y-8 max-w-5xl mx-auto">

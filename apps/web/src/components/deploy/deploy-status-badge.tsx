@@ -1,11 +1,11 @@
 import React from "react";
 import { Badge, Spinner } from "@shipora/ui";
-import { CheckCircle2, XCircle, Clock, RotateCcw, AlertTriangle } from "lucide-react";
+import { CheckCircle2, XCircle, Clock, RotateCcw, AlertTriangle, Activity } from "lucide-react";
 
 export function DeployStatusBadge({
   status,
 }: {
-  status: "pending" | "building" | "deploying" | "success" | "failed" | "rolled_back" | string;
+  status: "pending" | "building" | "deploying" | "verifying" | "rolling_back" | "success" | "failed" | "rolled_back" | string;
 }) {
   if (status === "success") {
     return (
@@ -27,8 +27,8 @@ export function DeployStatusBadge({
 
   if (status === "rolled_back") {
     return (
-      <Badge variant="warning" className="gap-1.5 py-1 px-2.5 bg-amber-500/10 text-amber-400 border-amber-500/20">
-        <RotateCcw className="h-3.5 w-3.5 text-amber-400" />
+      <Badge variant="warning" className="gap-1.5 py-1 px-2.5 bg-violet-500/10 text-violet-400 border-violet-500/20">
+        <RotateCcw className="h-3.5 w-3.5 text-violet-400" />
         <span>Rolled Back</span>
       </Badge>
     );
@@ -47,7 +47,25 @@ export function DeployStatusBadge({
     return (
       <Badge variant="warning" className="gap-1.5 py-1 px-2.5 bg-violet-500/10 text-violet-400 border-violet-500/20">
         <Spinner size="sm" />
-        <span>Provisioning ECS</span>
+        <span>Provisioning</span>
+      </Badge>
+    );
+  }
+
+  if (status === "verifying") {
+    return (
+      <Badge className="gap-1.5 py-1 px-2.5 bg-cyan-500/10 text-cyan-400 border-cyan-500/20">
+        <Activity className="h-3.5 w-3.5 text-cyan-400 animate-pulse" />
+        <span>Verifying Health</span>
+      </Badge>
+    );
+  }
+
+  if (status === "rolling_back") {
+    return (
+      <Badge className="gap-1.5 py-1 px-2.5 bg-amber-500/10 text-amber-400 border-amber-500/20">
+        <RotateCcw className="h-3.5 w-3.5 text-amber-400 animate-spin" />
+        <span>Rolling Back</span>
       </Badge>
     );
   }

@@ -29,13 +29,16 @@ export async function syncSecretsActivity(
     const mockSecretArn = `arn:aws:secretsmanager:${region}:123456789012:secret:${secretName}-a1b2c3`;
     const taskEnvSecretRefs: TaskSecretRef[] = (input.detectedEnvVars || []).map((key) => ({
       name: key,
+      reference: `${mockSecretArn}:${key}::`,
       valueFrom: `${mockSecretArn}:${key}::`,
     }));
 
     return {
       success: true,
+      secretVaultId: mockSecretArn,
       secretArn: mockSecretArn,
       injectedKeys: input.detectedEnvVars || [],
+      secretRefs: taskEnvSecretRefs,
       taskEnvSecretRefs,
     };
   }
@@ -76,6 +79,7 @@ export async function syncSecretsActivity(
     // Build valueFrom secret references (ARN:key::)
     const taskEnvSecretRefs: TaskSecretRef[] = injectedKeys.map((key) => ({
       name: key,
+      reference: `${secretArn}:${key}::`,
       valueFrom: `${secretArn}:${key}::`,
     }));
 
@@ -85,8 +89,10 @@ export async function syncSecretsActivity(
 
     return {
       success: true,
+      secretVaultId: secretArn,
       secretArn,
       injectedKeys,
+      secretRefs: taskEnvSecretRefs,
       taskEnvSecretRefs,
     };
   } catch (err: unknown) {
@@ -96,14 +102,18 @@ export async function syncSecretsActivity(
     const mockSecretArn = `arn:aws:secretsmanager:${region}:123456789012:secret:${secretName}`;
     const taskEnvSecretRefs: TaskSecretRef[] = (input.detectedEnvVars || []).map((key) => ({
       name: key,
+      reference: `${mockSecretArn}:${key}::`,
       valueFrom: `${mockSecretArn}:${key}::`,
     }));
 
     return {
       success: true,
+      secretVaultId: mockSecretArn,
       secretArn: mockSecretArn,
       injectedKeys: input.detectedEnvVars || [],
+      secretRefs: taskEnvSecretRefs,
       taskEnvSecretRefs,
     };
   }
+
 }

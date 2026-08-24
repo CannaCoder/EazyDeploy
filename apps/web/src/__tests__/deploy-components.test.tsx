@@ -102,4 +102,20 @@ describe("DeployProgressStepper Component", () => {
       screen.getByText("Container build failed: Dockerfile syntax error at line 14")
     ).toBeDefined();
   });
+
+  it("renders Azure provider specific stages in stepper", () => {
+    render(
+      <DeployProgressStepper
+        stage="building"
+        percent={30}
+        provider="azure"
+        services={[{ name: "web", type: "nextjs", port: 3000 }]}
+      />
+    );
+
+    expect(screen.getByText("ACR Container Builds")).toBeDefined();
+    expect(screen.getByText("Container Apps Provisioning")).toBeDefined();
+    expect(screen.getByText("HTTPS Ingress Routing")).toBeDefined();
+  });
 });
+

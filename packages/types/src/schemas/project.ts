@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { CloudProviderEnum } from "./cloud-provider.js";
 
 export const ProjectSchema = z.object({
   id: z.string().uuid(),
@@ -9,6 +10,8 @@ export const ProjectSchema = z.object({
   githubInstallationId: z.number().int().positive("Installation ID must be positive"),
   productionBranch: z.string().default("main"),
   envSecretArn: z.string().nullable().optional(),
+  cloudProvider: CloudProviderEnum.default("aws"),
+  cloudConnectionId: z.string().nullable().optional(),
   createdAt: z.date().default(() => new Date()),
 });
 
@@ -17,6 +20,8 @@ export const CreateProjectSchema = ProjectSchema.omit({
   createdAt: true,
 }).extend({
   productionBranch: z.string().default("main").optional(),
+  cloudProvider: CloudProviderEnum.default("aws").optional(),
+  cloudConnectionId: z.string().nullable().optional(),
 });
 
 export const UpdateProjectSchema = CreateProjectSchema.partial();
@@ -24,3 +29,4 @@ export const UpdateProjectSchema = CreateProjectSchema.partial();
 export type Project = z.infer<typeof ProjectSchema>;
 export type CreateProject = z.infer<typeof CreateProjectSchema>;
 export type UpdateProject = z.infer<typeof UpdateProjectSchema>;
+

@@ -16,20 +16,42 @@ export async function analyzeRepoActivity(
 ): Promise<ServiceManifest> {
   const octokit = await getInstallationOctokit(input.installationId);
 
-  // 1. Fetch git tree recursively for the commit
+  // 1. Fetch git tree recursively for the commit or branch
   let treeItems: { path?: string; sha?: string; type?: string; size?: number }[] = [];
+  const targetRef = input.commitSha && input.commitSha.length === 40 ? input.commitSha : (input.branch || "main");
 
   if (octokit) {
     try {
       const treeResponse = await octokit.rest.git.getTree({
         owner: input.repoOwner,
         repo: input.repoName,
-        tree_sha: input.commitSha,
+        tree_sha: targetRef,
         recursive: "true",
       });
       treeItems = treeResponse.data.tree;
     } catch (err: unknown) {
-      console.warn(`[analyzeRepoActivity] Could not fetch tree from GitHub for ${input.repoOwner}/${input.repoName}:`, (err as Error).message);
+      console.warn(`[analyzeRepoActivity] Could not fetch tree via Octokit for ${input.repoOwner}/${input.repoName}:`, (err as Error).message);
+    }
+  }
+
+  // Fallback: fetch tree via direct GitHub API using GITHUB_PAT if available
+  if (treeItems.length === 0 && process.env["GITHUB_PAT"]) {
+    try {
+      const ghRes = await fetch(
+        `https://api.github.com/repos/${input.repoOwner}/${input.repoName}/git/trees/${targetRef}?recursive=1`,
+        {
+          headers: {
+            Authorization: `token ${process.env["GITHUB_PAT"]}`,
+            Accept: "application/vnd.github.v3+json",
+          },
+        }
+      );
+      if (ghRes.ok) {
+        const ghData = (await ghRes.json()) as { tree?: any[] };
+        treeItems = ghData.tree || [];
+      }
+    } catch {
+      // ignore
     }
   }
 

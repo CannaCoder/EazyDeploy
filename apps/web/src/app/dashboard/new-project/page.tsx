@@ -20,14 +20,41 @@ import {
   GitBranch,
   FolderGit2,
   ShieldCheck,
+  Search,
+  Key,
+  Star,
+  Lock,
+  Globe,
+  ExternalLink,
+  CheckCircle2,
+  AlertCircle,
+  Sparkles,
+  ArrowRight,
 } from "lucide-react";
+import { CloudProviderCard } from "@/components/cloud-connect/cloud-provider-card";
+import { AwsConnectWizard } from "@/components/cloud-connect/aws-connect-wizard";
+import { AzureConnectWizard } from "@/components/cloud-connect/azure-connect-wizard";
+import type { CloudProvider } from "@shipora/types";
 
 interface RepoItem {
   id: number;
   name: string;
   fullName: string;
   owner: string;
+  ownerAvatar?: string;
   defaultBranch: string;
+  branches?: string[];
+  description?: string;
+  stars?: number;
+  isPrivate?: boolean;
+  language?: string;
+  htmlUrl?: string;
+}
+
+interface GitHubUser {
+  login: string;
+  name?: string;
+  avatarUrl?: string;
 }
 
 function NewProjectContent() {
@@ -35,283 +62,813 @@ function NewProjectContent() {
   const searchParams = useSearchParams();
   const installationIdParam = searchParams.get("installation_id");
 
-  const [step, setStep] = useState<1 | 2 | 3 | 4>(1);
-  const [installationId, setInstallationId] = useState<number>(
-    installationIdParam ? Number(installationIdParam) : 1001
-  );
-  const [repos, setRepos] = useState<RepoItem[]>([]);
-  const [isLoadingRepos, setIsLoadingRepos] = useState(false);
+  const [step, setStep] = useState<1 | 2 | 3>(1);
+  const [activeTab, setActiveTab] = useState<"direct" | "token" | "app">("direct");
+
+  // Direct repo lookup state
+  const [repoInput, setRepoInput] = useState("");
+  const [personalToken, setPersonalToken] = useState("");
+  const [isVerifyingRepo, setIsVerifyingRepo] = useState(false);
+  const [verifiedRepo, setVerifiedRepo] = useState<RepoItem | null>(null);
+
+  // Token / Account list state
+  const [isVerifyingToken, setIsVerifyingToken] = useState(false);
+  const [githubUser, setGithubUser] = useState<GitHubUser | null>(null);
+  const [userRepos, setUserRepos] = useState<RepoItem[]>([]);
+  const [searchFilter, setSearchFilter] = useState("");
+
+  // App setup info
+  const [appInfo, setAppInfo] = useState<{ configured: boolean; slug: string | null; installUrl: string | null }>({
+    configured: false,
+    slug: null,
+    installUrl: null,
+  });
+
+  // Selected project state
   const [selectedRepo, setSelectedRepo] = useState<RepoItem | null>(null);
+  const [selectedProvider, setSelectedProvider] = useState<CloudProvider>("azure");
+  const [wizardModal, setWizardModal] = useState<CloudProvider | null>(null);
   const [projectName, setProjectName] = useState("");
   const [productionBranch, setProductionBranch] = useState("main");
   const [errorMsg, setErrorMsg] = useState("");
+  const [connectedProviders, setConnectedProviders] = useState<{ aws: boolean; azure: boolean }>({
+    aws: true,
+    azure: true,
+  });
+  const [azureConnectionId, setAzureConnectionId] = useState<string | null>(null);
+
+  const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000";
+
+  const triggerDeploy = trpc.deployment.trigger.useMutation({
+    onSuccess(deployData) {
+      if (deployData?.projectId && deployData?.id) {
+        router.push(`/dashboard/projects/${deployData.projectId}/deployments/${deployData.id}`);
+      } else {
+        router.push(`/dashboard/projects/${createProject.data?.id}`);
+      }
+    },
+    onError() {
+      if (createProject.data?.id) {
+        router.push(`/dashboard/projects/${createProject.data.id}`);
+      }
+    },
+  });
 
   const createProject = trpc.project.create.useMutation({
     onSuccess(data) {
-      router.push(`/dashboard/projects/${data.id}`);
+      triggerDeploy.mutate({
+        projectId: data.id,
+        branch: productionBranch || data.productionBranch || "main",
+      });
     },
     onError(err) {
       setErrorMsg(err.message);
     },
   });
 
-  // Fetch repos for the given installation ID
-  const fetchRepos = async (instId: number) => {
-    setIsLoadingRepos(true);
-    setErrorMsg("");
+  const handleConnectAzure = async () => {
     try {
-      const apiUrl = process.env["NEXT_PUBLIC_API_URL"] || "http://localhost:4000";
-      const res = await fetch(`${apiUrl}/github/repos?installation_id=${instId}`);
+      if (selectedRepo && typeof window !== "undefined") {
+        sessionStorage.setItem("new_project_selected_repo", JSON.stringify(selectedRepo));
+      }
+      const targetReturn = typeof window !== "undefined" ? window.location.pathname : "/dashboard/new-project";
+      const res = await fetch(`${apiUrl}/auth/azure/start?returnTo=${encodeURIComponent(targetReturn)}`);
       if (res.ok) {
         const data = await res.json();
-        setRepos(data.repositories || []);
-        setStep(2);
-      } else {
-        // Mock fallback if API offline
-        setRepos([
-          {
-            id: 101,
-            name: "eazy-monorepo",
-            fullName: "developer/eazy-monorepo",
-            owner: "developer",
-            defaultBranch: "main",
-          },
-          {
-            id: 102,
-            name: "saas-platform",
-            fullName: "developer/saas-platform",
-            owner: "developer",
-            defaultBranch: "main",
-          },
-        ]);
-        setStep(2);
+        if (data.authUrl) {
+          window.location.href = data.authUrl;
+          return;
+        }
       }
     } catch {
-      setRepos([
-        {
-          id: 101,
-          name: "eazy-monorepo",
-          fullName: "developer/eazy-monorepo",
-          owner: "developer",
-          defaultBranch: "main",
-        },
-      ]);
-      setStep(2);
+      // fallback
+    }
+    setWizardModal("azure");
+  };
+
+  // Load connected cloud providers on mount
+  useEffect(() => {
+    fetch(`${apiUrl}/cloud-connect/connections`)
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (data?.connections) {
+          const hasAws = data.connections.some((c: any) => c.provider === "aws");
+          const hasAzure = data.connections.some((c: any) => c.provider === "azure");
+          const azureConn = data.connections.find((c: any) => c.provider === "azure");
+          if (azureConn?.id) {
+            setAzureConnectionId(azureConn.id);
+          }
+          setConnectedProviders({
+            aws: hasAws || true,
+            azure: hasAzure !== undefined ? hasAzure : true,
+          });
+          if (hasAzure) {
+            setSelectedProvider("azure");
+          }
+        }
+      })
+      .catch(() => {});
+  }, [apiUrl]);
+
+  // Handle redirect back from OAuth
+  useEffect(() => {
+    const status = searchParams.get("status");
+    const provider = searchParams.get("provider");
+    const connId = searchParams.get("connectionId");
+
+    if (connId) {
+      setAzureConnectionId(connId);
+    }
+
+    if (status === "connected" && provider === "azure") {
+      setConnectedProviders((prev) => ({ ...prev, azure: true }));
+      setSelectedProvider("azure");
+
+      // Automatically restore repo and jump directly to Step 2
+      if (typeof window !== "undefined") {
+        const saved = sessionStorage.getItem("new_project_selected_repo");
+        if (saved) {
+          try {
+            const repo = JSON.parse(saved);
+            setSelectedRepo(repo);
+            setProjectName(repo.name);
+            setProductionBranch(repo.defaultBranch || "main");
+            setStep(2);
+          } catch {
+            // ignore
+          }
+        }
+      }
+    }
+  }, [searchParams]);
+
+  // Load GitHub App Info on mount
+  useEffect(() => {
+    fetch(`${apiUrl}/github/app-info`)
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (data) setAppInfo(data);
+      })
+      .catch(() => {});
+  }, [apiUrl]);
+
+  // If redirected with installation_id from GitHub
+  useEffect(() => {
+    if (installationIdParam) {
+      const instId = Number(installationIdParam);
+      fetch(`${apiUrl}/github/repos?installation_id=${instId}`)
+        .then((res) => (res.ok ? res.json() : null))
+        .then((data) => {
+          if (data?.repositories && data.repositories.length > 0) {
+            setUserRepos(data.repositories);
+            setActiveTab("token");
+          }
+        })
+        .catch(() => {});
+    }
+  }, [installationIdParam, apiUrl]);
+
+  // 1. Verify Direct Repo via Real GitHub API
+  const handleVerifyDirectRepo = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    if (!repoInput.trim()) {
+      setErrorMsg("Please enter a GitHub repository name (e.g. facebook/react or your-username/your-repo)");
+      return;
+    }
+
+    setIsVerifyingRepo(true);
+    setErrorMsg("");
+    setVerifiedRepo(null);
+
+    try {
+      const res = await fetch(`${apiUrl}/github/verify-repo`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          repo: repoInput.trim(),
+          token: personalToken.trim() || undefined,
+        }),
+      });
+
+      const data = await res.json();
+
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || `Repository could not be verified (${res.status})`);
+      }
+
+      setVerifiedRepo(data.repository);
+    } catch (err: unknown) {
+      setErrorMsg((err as Error).message);
     } finally {
-      setIsLoadingRepos(false);
+      setIsVerifyingRepo(false);
     }
   };
 
-  useEffect(() => {
-    if (installationIdParam) {
-      const id = Number(installationIdParam);
-      setInstallationId(id);
-      fetchRepos(id);
+  // 2. Verify GitHub Personal Access Token & Load Real User Repos
+  const handleVerifyToken = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    if (!personalToken.trim()) {
+      setErrorMsg("Please enter your GitHub Personal Access Token");
+      return;
     }
-  }, [installationIdParam]);
+
+    setIsVerifyingToken(true);
+    setErrorMsg("");
+
+    try {
+      const res = await fetch(`${apiUrl}/github/verify-token`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ token: personalToken.trim() }),
+      });
+
+      const data = await res.json();
+
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || "Invalid GitHub token");
+      }
+
+      setGithubUser(data.user);
+      setUserRepos(data.repositories || []);
+    } catch (err: unknown) {
+      setErrorMsg((err as Error).message);
+    } finally {
+      setIsVerifyingToken(false);
+    }
+  };
 
   const handleSelectRepo = (repo: RepoItem) => {
     setSelectedRepo(repo);
     setProjectName(repo.name);
     setProductionBranch(repo.defaultBranch || "main");
-    setStep(3);
+    if (typeof window !== "undefined") {
+      sessionStorage.setItem("new_project_selected_repo", JSON.stringify(repo));
+    }
+    setStep(2);
   };
 
   const handleFinish = async () => {
     if (!selectedRepo) return;
     setErrorMsg("");
+    const connId = selectedProvider === "azure"
+      ? (azureConnectionId || searchParams.get("connectionId") || undefined)
+      : undefined;
+
     createProject.mutate({
       name: projectName || selectedRepo.name,
       githubRepoOwner: selectedRepo.owner,
       githubRepoName: selectedRepo.name,
-      githubInstallationId: installationId,
+      githubInstallationId: 1001,
       productionBranch: productionBranch || "main",
+      cloudProvider: selectedProvider,
+      cloudConnectionId: connId,
     });
   };
 
+  const filteredRepos = userRepos.filter((r) =>
+    r.fullName.toLowerCase().includes(searchFilter.toLowerCase())
+  );
+
   return (
-    <div className="max-w-3xl mx-auto space-y-8">
+    <div className="max-w-3xl mx-auto space-y-8 animate-in fade-in duration-200">
       {/* Header */}
       <div>
-        <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-white">
+        <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-white font-mono">
           Connect New Project
         </h1>
-        <p className="text-sm text-muted-foreground mt-1">
-          Install the Shipora GitHub App to link your monorepo and enable zero-conflict automated deployments.
+        <p className="text-sm text-zinc-400 mt-1">
+          Link your GitHub monorepo and select your cloud deployment target (AWS or Azure).
         </p>
       </div>
 
       {/* Step Progress Tracker */}
       <div className="grid grid-cols-3 gap-2">
-        <div
-          className={`h-1.5 rounded-full transition-colors ${
-            step >= 1 ? "bg-violet-600" : "bg-muted"
-          }`}
-        />
-        <div
-          className={`h-1.5 rounded-full transition-colors ${
-            step >= 2 ? "bg-violet-600" : "bg-muted"
-          }`}
-        />
-        <div
-          className={`h-1.5 rounded-full transition-colors ${
-            step >= 3 ? "bg-violet-600" : "bg-muted"
-          }`}
-        />
+        <div className={`h-1.5 rounded-full transition-colors ${step >= 1 ? "bg-white" : "bg-zinc-800"}`} />
+        <div className={`h-1.5 rounded-full transition-colors ${step >= 2 ? "bg-white" : "bg-zinc-800"}`} />
+        <div className={`h-1.5 rounded-full transition-colors ${step >= 3 ? "bg-white" : "bg-zinc-800"}`} />
       </div>
 
       {errorMsg && (
-        <div className="p-4 rounded-xl bg-destructive/15 border border-destructive/30 text-destructive-foreground text-sm">
-          {errorMsg}
+        <div className="p-4 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-300 text-sm font-mono flex items-start gap-2.5">
+          <AlertCircle className="h-4 w-4 mt-0.5 shrink-0 text-rose-400" />
+          <span>{errorMsg}</span>
         </div>
       )}
 
-      {/* Step 1: Install GitHub App */}
+      {/* STEP 1: Link & Verify GitHub Repository */}
       {step === 1 && (
-        <Card className="bg-card/70 border-border/60">
+        <Card className="bg-[#09090b] border-white/10 shadow-2xl">
           <CardHeader>
             <div className="flex items-center gap-3">
-              <div className="h-10 w-10 rounded-xl bg-violet-500/15 text-violet-400 flex items-center justify-center">
+              <div className="h-10 w-10 rounded-xl bg-zinc-900 border border-white/10 text-white flex items-center justify-center">
                 <Github className="h-5 w-5" />
               </div>
               <div>
-                <CardTitle className="text-lg text-white">Step 1: Install GitHub App</CardTitle>
-                <CardDescription>
-                  Grant Shipora access to read code files and post commit status checks.
+                <CardTitle className="text-lg text-white font-mono">Step 1: Link GitHub Repository</CardTitle>
+                <CardDescription className="text-zinc-400">
+                  Verify and connect your repository with live GitHub API checks.
                 </CardDescription>
               </div>
             </div>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <p className="text-sm text-muted-foreground">
-              Shipora uses fine-grained GitHub permissions. We only request read access to contents, metadata, and status checks.
-            </p>
 
-            <div className="flex flex-col sm:flex-row gap-3 pt-2">
-              <Button
-                onClick={() => fetchRepos(installationId)}
-                disabled={isLoadingRepos}
-                className="bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-500 hover:to-indigo-500 text-white gap-2"
+            {/* Sub-tabs */}
+            <div className="flex gap-2 pt-4 border-b border-white/[0.08] pb-1">
+              <button
+                type="button"
+                onClick={() => { setActiveTab("direct"); setErrorMsg(""); }}
+                className={`text-xs font-mono px-3 py-1.5 rounded-md transition-colors cursor-pointer ${
+                  activeTab === "direct"
+                    ? "bg-white text-black font-semibold"
+                    : "text-zinc-400 hover:text-white bg-transparent"
+                }`}
               >
-                {isLoadingRepos ? (
-                  <Spinner size="sm" />
-                ) : (
-                  <>
-                    <Github className="h-4 w-4" />
-                    Connect via GitHub App
-                  </>
-                )}
-              </Button>
-            </div>
-          </CardContent>
-        </Card>
-      )}
-
-      {/* Step 2: Select Repository */}
-      {step === 2 && (
-        <Card className="bg-card/70 border-border/60">
-          <CardHeader>
-            <div className="flex items-center justify-between">
-              <div>
-                <CardTitle className="text-lg text-white">Step 2: Choose Repository</CardTitle>
-                <CardDescription>
-                  Select which repository from your GitHub installation to deploy.
-                </CardDescription>
-              </div>
-              <Button variant="ghost" size="sm" onClick={() => setStep(1)}>
-                Change App
-              </Button>
+                Direct Repo Import
+              </button>
+              <button
+                type="button"
+                onClick={() => { setActiveTab("token"); setErrorMsg(""); }}
+                className={`text-xs font-mono px-3 py-1.5 rounded-md transition-colors cursor-pointer ${
+                  activeTab === "token"
+                    ? "bg-white text-black font-semibold"
+                    : "text-zinc-400 hover:text-white bg-transparent"
+                }`}
+              >
+                Personal Token / All Repos
+              </button>
+              <button
+                type="button"
+                onClick={() => { setActiveTab("app"); setErrorMsg(""); }}
+                className={`text-xs font-mono px-3 py-1.5 rounded-md transition-colors cursor-pointer ${
+                  activeTab === "app"
+                    ? "bg-white text-black font-semibold"
+                    : "text-zinc-400 hover:text-white bg-transparent"
+                }`}
+              >
+                GitHub App
+              </button>
             </div>
           </CardHeader>
-          <CardContent className="space-y-3">
-            {repos.length === 0 ? (
-              <p className="text-sm text-muted-foreground py-4 text-center">
-                No repositories found. Please verify the GitHub App is installed on your repositories.
-              </p>
-            ) : (
-              repos.map((repo) => (
-                <div
-                  key={repo.id}
-                  onClick={() => handleSelectRepo(repo)}
-                  className="flex items-center justify-between p-4 rounded-xl border border-border/50 bg-background/50 hover:bg-accent/40 hover:border-violet-500/50 cursor-pointer transition-all"
-                >
-                  <div className="flex items-center gap-3">
-                    <FolderGit2 className="h-5 w-5 text-violet-400" />
-                    <div>
-                      <h4 className="text-sm font-semibold text-white">{repo.fullName}</h4>
-                      <p className="text-xs text-muted-foreground flex items-center gap-1.5 mt-0.5">
-                        <GitBranch className="h-3 w-3" />
-                        <span>Default: {repo.defaultBranch}</span>
-                      </p>
+
+          <CardContent className="space-y-6 pt-2">
+            {/* TAB 1: Direct Repo Import */}
+            {activeTab === "direct" && (
+              <div className="space-y-4">
+                <form onSubmit={handleVerifyDirectRepo} className="space-y-3">
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-medium text-zinc-300 block font-mono">
+                      GitHub Repository Name or URL:
+                    </label>
+                    <div className="flex gap-2">
+                      <input
+                        type="text"
+                        placeholder="e.g. facebook/react or your-username/your-monorepo"
+                        value={repoInput}
+                        onChange={(e) => setRepoInput(e.target.value)}
+                        className="flex-1 h-10 px-3 rounded-lg bg-zinc-900 border border-white/15 text-xs text-white placeholder:text-zinc-600 font-mono focus:outline-none focus:border-white"
+                      />
+                      <Button
+                        type="submit"
+                        disabled={isVerifyingRepo || !repoInput.trim()}
+                        className="h-10 px-5 text-xs font-mono bg-white hover:bg-zinc-200 text-black font-semibold cursor-pointer shrink-0"
+                      >
+                        {isVerifyingRepo ? <Spinner size="sm" /> : "Verify Repo"}
+                      </Button>
                     </div>
                   </div>
-                  <Button size="sm" variant="outline" className="text-xs">
-                    Select
-                  </Button>
+
+                  <div className="space-y-1">
+                    <label className="text-[11px] text-zinc-500 font-mono flex items-center justify-between">
+                      <span>Optional Personal Access Token (for private repositories):</span>
+                      <a
+                        href="https://github.com/settings/tokens/new?scopes=repo,read:org"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-zinc-400 hover:text-white underline inline-flex items-center gap-1"
+                      >
+                        <span>Generate on GitHub</span>
+                        <ExternalLink className="h-3 w-3" />
+                      </a>
+                    </label>
+                    <input
+                      type="password"
+                      placeholder="ghp_... or github_pat_... (Leave blank for public repositories)"
+                      value={personalToken}
+                      onChange={(e) => setPersonalToken(e.target.value)}
+                      className="w-full h-8 px-3 rounded-md bg-zinc-900/60 border border-white/10 text-xs text-white placeholder:text-zinc-600 font-mono focus:outline-none focus:border-white/30"
+                    />
+                  </div>
+                </form>
+
+                {/* Verified Repo Result Card */}
+                {verifiedRepo && (
+                  <div className="p-4 rounded-xl bg-gradient-to-b from-emerald-950/20 via-zinc-900 to-zinc-900 border border-emerald-500/30 space-y-3 animate-in fade-in zoom-in-95 duration-150">
+                    <div className="flex items-start justify-between">
+                      <div className="flex items-center gap-3">
+                        {verifiedRepo.ownerAvatar ? (
+                          <img
+                            src={verifiedRepo.ownerAvatar}
+                            alt={verifiedRepo.owner}
+                            className="h-9 w-9 rounded-lg border border-white/10"
+                          />
+                        ) : (
+                          <div className="h-9 w-9 rounded-lg bg-zinc-800 border border-white/10 flex items-center justify-center">
+                            <FolderGit2 className="h-5 w-5 text-emerald-400" />
+                          </div>
+                        )}
+                        <div>
+                          <h4 className="text-sm font-semibold text-white font-mono flex items-center gap-2">
+                            <span>{verifiedRepo.fullName}</span>
+                            <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 flex items-center gap-1 font-normal">
+                              <CheckCircle2 className="h-3 w-3" />
+                              <span>Verified</span>
+                            </span>
+                          </h4>
+                          {verifiedRepo.description && (
+                            <p className="text-xs text-zinc-400 mt-0.5 max-w-md line-clamp-1">
+                              {verifiedRepo.description}
+                            </p>
+                          )}
+                        </div>
+                      </div>
+
+                      <Button
+                        size="sm"
+                        variant="primary"
+                        onClick={() => handleSelectRepo(verifiedRepo)}
+                        className="bg-emerald-500 hover:bg-emerald-400 text-black font-semibold text-xs font-mono gap-1.5 cursor-pointer"
+                      >
+                        <span>Select Repo</span>
+                        <ArrowRight className="h-3.5 w-3.5" />
+                      </Button>
+                    </div>
+
+                    <div className="flex items-center gap-4 text-xs font-mono text-zinc-400 pt-2 border-t border-white/5">
+                      <span className="flex items-center gap-1">
+                        <GitBranch className="h-3.5 w-3.5 text-zinc-300" />
+                        <span>Branch: {verifiedRepo.defaultBranch}</span>
+                      </span>
+                      {verifiedRepo.stars !== undefined && (
+                        <span className="flex items-center gap-1">
+                          <Star className="h-3.5 w-3.5 text-amber-400" />
+                          <span>{verifiedRepo.stars.toLocaleString()}</span>
+                        </span>
+                      )}
+                      <span className="flex items-center gap-1">
+                        {verifiedRepo.isPrivate ? (
+                          <>
+                            <Lock className="h-3.5 w-3.5 text-zinc-300" />
+                            <span>Private</span>
+                          </>
+                        ) : (
+                          <>
+                            <Globe className="h-3.5 w-3.5 text-zinc-300" />
+                            <span>Public</span>
+                          </>
+                        )}
+                      </span>
+                      {verifiedRepo.language && (
+                        <span className="px-2 py-0.5 rounded bg-zinc-800 text-zinc-300 border border-white/5 text-[10px]">
+                          {verifiedRepo.language}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* TAB 2: Token / Account Repos List */}
+            {activeTab === "token" && (
+              <div className="space-y-4">
+                {!githubUser ? (
+                  <form onSubmit={handleVerifyToken} className="space-y-3">
+                    <p className="text-xs text-zinc-400">
+                      Enter a GitHub Personal Access Token to browse and select from all your personal and organization repositories.
+                    </p>
+                    <div className="flex gap-2">
+                      <input
+                        type="password"
+                        placeholder="ghp_... or github_pat_..."
+                        value={personalToken}
+                        onChange={(e) => setPersonalToken(e.target.value)}
+                        className="flex-1 h-10 px-3 rounded-lg bg-zinc-900 border border-white/15 text-xs text-white placeholder:text-zinc-600 font-mono focus:outline-none focus:border-white"
+                      />
+                      <Button
+                        type="submit"
+                        disabled={isVerifyingToken || !personalToken.trim()}
+                        className="h-10 px-5 text-xs font-mono bg-white hover:bg-zinc-200 text-black font-semibold cursor-pointer shrink-0"
+                      >
+                        {isVerifyingToken ? <Spinner size="sm" /> : "Authenticate"}
+                      </Button>
+                    </div>
+                    <p className="text-[11px] text-zinc-500 font-mono">
+                      <a
+                        href="https://github.com/settings/tokens/new?scopes=repo,read:org"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-zinc-400 hover:text-white underline inline-flex items-center gap-1"
+                      >
+                        <span>Generate a Personal Access Token on GitHub (requires 'repo' scope)</span>
+                        <ExternalLink className="h-3 w-3" />
+                      </a>
+                    </p>
+                  </form>
+                ) : (
+                  <div className="space-y-4">
+                    {/* User profile banner */}
+                    <div className="flex items-center justify-between p-3 rounded-lg bg-zinc-900 border border-white/10 font-mono text-xs">
+                      <div className="flex items-center gap-2.5">
+                        {githubUser.avatarUrl && (
+                          <img
+                            src={githubUser.avatarUrl}
+                            alt={githubUser.login}
+                            className="h-7 w-7 rounded-full border border-white/10"
+                          />
+                        )}
+                        <div>
+                          <span className="text-white font-semibold">{githubUser.name || githubUser.login}</span>
+                          <span className="text-zinc-500 ml-1.5">(@{githubUser.login})</span>
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => { setGithubUser(null); setUserRepos([]); }}
+                        className="text-zinc-500 hover:text-zinc-300 text-[11px] underline cursor-pointer"
+                      >
+                        Disconnect
+                      </button>
+                    </div>
+
+                    {/* Search box */}
+                    <div className="relative">
+                      <Search className="h-4 w-4 absolute left-3 top-3 text-zinc-500" />
+                      <input
+                        type="text"
+                        placeholder="Search your repositories..."
+                        value={searchFilter}
+                        onChange={(e) => setSearchFilter(e.target.value)}
+                        className="w-full h-10 pl-9 pr-3 rounded-lg bg-zinc-900 border border-white/15 text-xs text-white placeholder:text-zinc-600 font-mono focus:outline-none focus:border-white"
+                      />
+                    </div>
+
+                    {/* Repos list */}
+                    <div className="max-h-64 overflow-y-auto space-y-2 pr-1 custom-scrollbar">
+                      {filteredRepos.length === 0 ? (
+                        <p className="text-xs text-zinc-500 text-center py-6 font-mono">
+                          No repositories found matching "{searchFilter}".
+                        </p>
+                      ) : (
+                        filteredRepos.map((repo) => (
+                          <div
+                            key={repo.id}
+                            onClick={() => handleSelectRepo(repo)}
+                            className="flex items-center justify-between p-3 rounded-lg border border-white/10 bg-black hover:bg-zinc-900 hover:border-white/20 transition-all cursor-pointer group"
+                          >
+                            <div className="flex items-center gap-2.5 min-w-0">
+                              <FolderGit2 className="h-4 w-4 text-zinc-400 group-hover:text-white shrink-0" />
+                              <div className="truncate">
+                                <h5 className="text-xs font-semibold text-white font-mono truncate">
+                                  {repo.fullName}
+                                </h5>
+                                <p className="text-[10px] text-zinc-500 font-mono">
+                                  Branch: {repo.defaultBranch}
+                                </p>
+                              </div>
+                            </div>
+                            <Button size="sm" variant="outline" className="text-xs font-mono h-7 px-2.5 cursor-pointer">
+                              Select
+                            </Button>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* TAB 3: GitHub App */}
+            {activeTab === "app" && (
+              <div className="p-5 rounded-lg bg-gradient-to-b from-zinc-900/80 via-black to-black border border-white/10 space-y-4 text-center">
+                <div className="space-y-1">
+                  <h4 className="text-sm font-semibold text-white font-mono">
+                    Custom GitHub App Integration
+                  </h4>
+                  <p className="text-xs text-zinc-400 max-w-md mx-auto">
+                    {appInfo.configured
+                      ? `Your GitHub App (${appInfo.slug}) is ready for installation.`
+                      : "For full webhook automation in production, register a GitHub App in your GitHub organization."}
+                  </p>
                 </div>
-              ))
+
+                {appInfo.configured ? (
+                  <Button
+                    onClick={() => window.open(appInfo.installUrl!, "_blank", "noopener,noreferrer")}
+                    className="w-full sm:w-auto bg-white hover:bg-zinc-200 text-black font-semibold text-xs h-10 px-6 font-mono inline-flex items-center justify-center gap-2 transition-all cursor-pointer mx-auto"
+                  >
+                    <Github className="h-4 w-4" />
+                    <span>Install GitHub App on Your Account</span>
+                    <ExternalLink className="h-3.5 w-3.5" />
+                  </Button>
+                ) : (
+                  <div className="p-3 bg-zinc-900 rounded-lg border border-white/10 text-left font-mono text-xs text-zinc-300 space-y-2">
+                    <p className="text-white font-semibold">To set up a custom GitHub App:</p>
+                    <ol className="list-decimal list-inside space-y-1 text-zinc-400">
+                      <li>Go to GitHub Settings → Developer Settings → GitHub Apps → New GitHub App</li>
+                      <li>Set Webhook URL to: <code className="text-white">http://your-domain/webhooks/github</code></li>
+                      <li>Add <code className="text-white">GITHUB_APP_SLUG</code> and <code className="text-white">GITHUB_APP_ID</code> in your <code className="text-white">.env</code></li>
+                    </ol>
+                    <p className="text-emerald-400 text-[11px] pt-1">
+                      💡 Tip: You can immediately use the <strong>Direct Repo Import</strong> tab without registering an app!
+                    </p>
+                  </div>
+                )}
+              </div>
             )}
           </CardContent>
         </Card>
       )}
 
-      {/* Step 3: Configure & Confirm */}
-      {step === 3 && selectedRepo && (
-        <Card className="bg-card/70 border-border/60">
+      {/* STEP 2: Select Cloud Deployment Target */}
+      {step === 2 && selectedRepo && (
+        <Card className="bg-[#09090b] border-white/10 shadow-2xl">
           <CardHeader>
-            <CardTitle className="text-lg text-white">Step 3: Configure Project</CardTitle>
-            <CardDescription>
-              Set project details and branch to watch for deployments.
+            <div className="flex items-center justify-between">
+              <div>
+                <CardTitle className="text-lg text-white font-mono">Step 2: Select Cloud Provider</CardTitle>
+                <CardDescription className="text-zinc-400">
+                  Deploying <strong className="text-white font-mono">{selectedRepo.fullName}</strong>. Choose where to build and run your services.
+                </CardDescription>
+              </div>
+              <Button variant="ghost" size="sm" onClick={() => setStep(1)} className="font-mono text-xs cursor-pointer">
+                Change Repo
+              </Button>
+            </div>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <CloudProviderCard
+                provider="aws"
+                title="Amazon Web Services"
+                description="ECS Fargate • ECR • Secrets Manager"
+                badge="Supported"
+                isConnected={connectedProviders.aws}
+                isSelected={selectedProvider === "aws"}
+                onSelect={(p) => setSelectedProvider(p)}
+                onConnect={!connectedProviders.aws ? () => setWizardModal("aws") : undefined}
+              />
+
+              <CloudProviderCard
+                provider="azure"
+                title="Microsoft Azure"
+                description="Container Apps • ACR • Key Vault"
+                badge="1-Click SSO"
+                isConnected={connectedProviders.azure}
+                isSelected={selectedProvider === "azure"}
+                onSelect={(p) => setSelectedProvider(p)}
+                onConnect={!connectedProviders.azure ? handleConnectAzure : undefined}
+              />
+            </div>
+
+            {/* Active Account Status Banner */}
+            {selectedProvider === "aws" && connectedProviders.aws && (
+              <div className="p-3 rounded-lg bg-emerald-950/20 border border-emerald-500/30 text-xs font-mono text-emerald-300 flex items-center gap-2">
+                <CheckCircle2 className="h-4 w-4 text-emerald-400 shrink-0" />
+                <span>Targeting connected account: <strong className="text-white">AWS Production Account</strong></span>
+              </div>
+            )}
+
+            {selectedProvider === "azure" && connectedProviders.azure && (
+              <div className="p-3 rounded-lg bg-emerald-950/20 border border-emerald-500/30 text-xs font-mono text-emerald-300 flex items-center gap-2">
+                <CheckCircle2 className="h-4 w-4 text-emerald-400 shrink-0" />
+                <span>Targeting connected account: <strong className="text-white">Azure Subscription (1-Click SSO)</strong></span>
+              </div>
+            )}
+          </CardContent>
+          <CardFooter className="flex items-center justify-between border-t border-white/[0.08] pt-4">
+            <Button variant="ghost" onClick={() => setStep(1)} className="font-mono text-xs cursor-pointer">
+              Back
+            </Button>
+            <Button
+              onClick={() => setStep(3)}
+              className="bg-white hover:bg-zinc-200 text-black font-semibold font-mono text-xs h-9 px-4 cursor-pointer"
+            >
+              Continue to Configuration
+            </Button>
+          </CardFooter>
+        </Card>
+      )}
+
+      {/* STEP 3: Configure & Confirm */}
+      {step === 3 && selectedRepo && (
+        <Card className="bg-[#09090b] border-white/10 shadow-2xl">
+          <CardHeader>
+            <CardTitle className="text-lg text-white font-mono">Step 3: Configure Project</CardTitle>
+            <CardDescription className="text-zinc-400">
+              Set project details and production branch to monitor.
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-5">
-            <div className="space-y-2">
-              <label className="text-xs font-semibold text-muted-foreground uppercase">
+            <div className="space-y-1.5">
+              <label className="text-xs font-semibold text-zinc-300 font-mono">
                 Project Name
               </label>
               <input
                 type="text"
                 value={projectName}
                 onChange={(e) => setProjectName(e.target.value)}
-                className="w-full h-10 px-3 rounded-lg bg-background border border-border text-white text-sm focus:outline-none focus:ring-2 focus:ring-violet-500"
+                className="w-full h-10 px-3 rounded-lg bg-zinc-900 border border-white/15 text-white font-mono text-xs focus:outline-none focus:border-white"
               />
             </div>
 
-            <div className="space-y-2">
-              <label className="text-xs font-semibold text-muted-foreground uppercase">
+            <div className="space-y-1.5">
+              <label className="text-xs font-semibold text-zinc-300 font-mono">
                 Production Branch
               </label>
-              <input
-                type="text"
-                value={productionBranch}
-                onChange={(e) => setProductionBranch(e.target.value)}
-                className="w-full h-10 px-3 rounded-lg bg-background border border-border text-white text-sm focus:outline-none focus:ring-2 focus:ring-violet-500"
-              />
-              <p className="text-xs text-muted-foreground">
-                Pushes to this branch will trigger pre-deploy Conflict Guard checks.
+              {selectedRepo.branches && selectedRepo.branches.length > 1 ? (
+                <select
+                  value={productionBranch}
+                  onChange={(e) => setProductionBranch(e.target.value)}
+                  className="w-full h-10 px-3 rounded-lg bg-zinc-900 border border-white/15 text-white font-mono text-xs focus:outline-none focus:border-white cursor-pointer"
+                >
+                  {selectedRepo.branches.map((b) => (
+                    <option key={b} value={b}>
+                      {b} {b === selectedRepo.defaultBranch ? "(default)" : ""}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <input
+                  type="text"
+                  value={productionBranch}
+                  onChange={(e) => setProductionBranch(e.target.value)}
+                  className="w-full h-10 px-3 rounded-lg bg-zinc-900 border border-white/15 text-white font-mono text-xs focus:outline-none focus:border-white"
+                />
+              )}
+              <p className="text-[11px] text-zinc-500 font-mono">
+                Pushes to this branch will trigger automatic Conflict Guard pre-deploy static AST checks.
               </p>
             </div>
 
-            <div className="p-4 rounded-xl bg-violet-500/10 border border-violet-500/20 text-xs text-violet-300 flex items-start gap-2.5">
-              <ShieldCheck className="h-4 w-4 mt-0.5 shrink-0" />
-              <span>
-                Once connected, Shipora will automatically detect services (Next.js, Fastify, Docker) in your repo when you trigger a deployment.
-              </span>
+            <div className="p-4 rounded-xl bg-zinc-900/80 border border-white/10 text-xs font-mono text-zinc-300 space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="text-zinc-500">Repository:</span>
+                <span className="text-white font-semibold">{selectedRepo.fullName}</span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-zinc-500">Cloud Target:</span>
+                <span className="text-emerald-400 font-semibold uppercase">{selectedProvider}</span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-zinc-500">Branch:</span>
+                <span className="text-zinc-200">{productionBranch}</span>
+              </div>
             </div>
           </CardContent>
-          <CardFooter className="flex items-center justify-between border-t border-border/40 pt-4">
-            <Button variant="ghost" onClick={() => setStep(2)}>
+          <CardFooter className="flex items-center justify-between border-t border-white/[0.08] pt-4">
+            <Button variant="ghost" onClick={() => setStep(2)} className="font-mono text-xs cursor-pointer">
               Back
             </Button>
             <Button
               onClick={handleFinish}
-              disabled={createProject.isPending}
-              className="bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-500 hover:to-indigo-500 text-white"
+              disabled={createProject.isPending || triggerDeploy.isPending}
+              className="bg-white hover:bg-zinc-200 text-black font-semibold font-mono text-xs h-9 px-5 cursor-pointer flex items-center gap-2"
             >
-              {createProject.isPending ? <Spinner size="sm" /> : "Complete Connection"}
+              {createProject.isPending || triggerDeploy.isPending ? (
+                <>
+                  <Spinner size="sm" />
+                  <span>Deploying...</span>
+                </>
+              ) : (
+                "Complete & Deploy"
+              )}
             </Button>
           </CardFooter>
         </Card>
+      )}
+
+      {/* Cloud Connect Wizards Modals */}
+      {wizardModal === "aws" && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 z-50 animate-in fade-in">
+          <AwsConnectWizard
+            onConnected={() => setWizardModal(null)}
+            onCancel={() => setWizardModal(null)}
+          />
+        </div>
+      )}
+
+      {wizardModal === "azure" && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 z-50 animate-in fade-in">
+          <AzureConnectWizard
+            returnTo="/dashboard/new-project"
+            onConnected={(newConn) => {
+              setConnectedProviders((prev) => ({ ...prev, azure: true }));
+              setSelectedProvider("azure");
+              setWizardModal(null);
+            }}
+            onCancel={() => setWizardModal(null)}
+          />
+        </div>
       )}
     </div>
   );
@@ -330,3 +887,4 @@ export default function NewProjectPage() {
     </Suspense>
   );
 }
+

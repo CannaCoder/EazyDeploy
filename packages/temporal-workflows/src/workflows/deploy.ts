@@ -3,14 +3,15 @@ import {
   defineQuery,
   setHandler,
 } from "@temporalio/workflow";
+import type { CloudProvider } from "@shipora/types";
 import type {
   ConflictGuardActivities,
 } from "../activities/conflict-guard-activities.js";
 import type {
   DeployActivities,
-  BuildContainerResult,
-  ProvisionECSResult,
-  AttachLoadBalancerResult,
+  BuildImageActivityResult,
+  ProvisionServiceActivityResult,
+  ConfigureIngressActivityResult,
 } from "../activities/deploy-activities.js";
 import type { ServiceManifest } from "../activities/types.js";
 
@@ -22,6 +23,8 @@ export interface DeployWorkflowInput {
   commitSha: string;
   branch: string;
   installationId: number;
+  cloudProvider?: CloudProvider;
+  cloudConnectionId?: string;
   dashboardUrl?: string;
 }
 
@@ -31,7 +34,8 @@ export interface ServiceDeployStatus {
   port?: number;
   stage: "pending" | "building" | "provisioning" | "routing" | "success" | "failed";
   imageUri?: string;
-  taskDefinitionArn?: string;
+  cloudServiceId?: string;
+  currentRevision?: string;
   serviceUrl?: string;
   error?: string;
 }
@@ -44,18 +48,23 @@ export interface DeployProgress {
     | "syncing_secrets"
     | "provisioning"
     | "routing"
+    | "verifying"
+    | "rolling_back"
     | "completed"
     | "failed";
   percent: number;
   currentStep: string;
+  provider: CloudProvider;
   services: ServiceDeployStatus[];
   deployedUrls: Record<string, string>;
+  previousRevisionRefs?: Record<string, { aws?: string; azure?: string }>;
   error?: string;
 }
 
 export interface DeployWorkflowResult {
   success: boolean;
   deploymentId: string;
+  provider: CloudProvider;
   servicesDeployed: string[];
   deployedUrls: Record<string, string>;
   summary: string;
@@ -79,10 +88,11 @@ const {
 });
 
 const {
-  buildContainerActivity,
-  syncSecretsActivity,
-  provisionECSActivity,
-  attachLoadBalancerActivity,
+  resolveCloudAdapterActivity,
+  buildImageActivity,
+  pushSecretsActivity,
+  provisionServiceActivity,
+  configureIngressActivity,
 } = proxyActivities<DeployActivities>({
   startToCloseTimeout: "15 minutes",
   retry: {
@@ -93,13 +103,31 @@ const {
   },
 });
 
+const {
+  streamLogActivity,
+  verifyDeploymentActivity,
+  rollbackActivity,
+} = proxyActivities<DeployActivities>({
+  startToCloseTimeout: "7 minutes",
+  retry: {
+    initialInterval: "2s",
+    maximumInterval: "15s",
+    backoffCoefficient: 2,
+    maximumAttempts: 2,
+  },
+});
+
 export async function deployWorkflow(
   input: DeployWorkflowInput
 ): Promise<DeployWorkflowResult> {
+  let provider: CloudProvider = input.cloudProvider || "aws";
+  let connectionId: string | undefined = input.cloudConnectionId;
+
   let progress: DeployProgress = {
     stage: "initializing",
     percent: 5,
-    currentStep: "Initializing multi-service deploy pipeline",
+    currentStep: "Initializing multi-cloud deploy pipeline",
+    provider,
     services: [],
     deployedUrls: {},
   };
@@ -110,7 +138,23 @@ export async function deployWorkflow(
     input.dashboardUrl ||
     `https://app.shipora.dev/dashboard/projects/${input.projectId}/deployments/${input.deploymentId}`;
 
-  // 1. Initial Status check on GitHub
+  // 1. Resolve Cloud Provider and Connection from DB if not explicitly passed
+  try {
+    if (!input.cloudProvider) {
+      const resolved = await resolveCloudAdapterActivity({ projectId: input.projectId });
+      if (resolved?.provider) {
+        provider = resolved.provider;
+        connectionId = resolved.connectionId || connectionId;
+        progress.provider = provider;
+      }
+    }
+  } catch {
+    // Fall back to input or default 'aws'
+  }
+
+  const providerLabel = provider.toUpperCase();
+
+  // 2. Initial Status check on GitHub
   try {
     await reportGitHubStatusActivity({
       repoOwner: input.repoOwner,
@@ -118,14 +162,14 @@ export async function deployWorkflow(
       commitSha: input.commitSha,
       installationId: input.installationId,
       state: "pending",
-      description: "Shipora is deploying services to AWS ECS Fargate...",
+      description: `Shipora is deploying services to ${providerLabel}...`,
       targetUrl,
     });
   } catch {
     // Non-fatal
   }
 
-  // 2. Stage 1: Analyze repository and detect services
+  // 3. Stage 1: Analyze repository and detect services
   progress = {
     ...progress,
     stage: "analyzing",
@@ -155,6 +199,7 @@ export async function deployWorkflow(
     return {
       success: false,
       deploymentId: input.deploymentId,
+      provider,
       servicesDeployed: [],
       deployedUrls: {},
       summary: errorMsg,
@@ -163,7 +208,6 @@ export async function deployWorkflow(
   }
 
   if (!manifest.services || manifest.services.length === 0) {
-    // Fallback default service if none explicitly detected
     manifest.services = [
       {
         name: "web",
@@ -185,20 +229,21 @@ export async function deployWorkflow(
     })),
   };
 
-  // 3. Stage 2: Parallel AWS CodeBuild Container Builds
+  // 4. Stage 2: Parallel Container Builds
   progress = {
     ...progress,
     stage: "building",
     percent: 30,
-    currentStep: `Building Docker container images for ${manifest.services.length} service(s) in parallel via AWS CodeBuild`,
+    currentStep: `Building container images for ${manifest.services.length} service(s) via ${providerLabel}`,
     services: progress.services.map((s) => ({ ...s, stage: "building" })),
   };
 
-  const buildResults: BuildContainerResult[] = await Promise.all(
+  const buildResults: BuildImageActivityResult[] = await Promise.all(
     manifest.services.map(async (service) => {
       try {
-        const buildRes = await buildContainerActivity({
+        const buildRes = await buildImageActivity({
           projectId: input.projectId,
+          deploymentId: input.deploymentId,
           serviceName: service.name,
           rootPath: service.rootPath,
           commitSha: input.commitSha,
@@ -207,6 +252,8 @@ export async function deployWorkflow(
           repoName: input.repoName,
           installationId: input.installationId,
           buildCommand: service.buildCommand,
+          cloudProvider: provider,
+          connectionId,
         });
         return buildRes;
       } catch (err: unknown) {
@@ -249,6 +296,7 @@ export async function deployWorkflow(
     return {
       success: false,
       deploymentId: input.deploymentId,
+      provider,
       servicesDeployed: [],
       deployedUrls: {},
       summary: errorMsg,
@@ -269,39 +317,45 @@ export async function deployWorkflow(
     }),
   };
 
-  // 4. Stage 3 & 4: Secret Syncing & ECS Task Provisioning per Service
+  // 5. Stage 3 & 4: Secret Syncing & Compute Provisioning per Service
   progress = {
     ...progress,
     stage: "provisioning",
     percent: 60,
-    currentStep: "Injecting secrets and registering ECS Fargate Task Definitions",
+    currentStep: `Injecting secrets and provisioning ${providerLabel} compute workloads`,
   };
 
-  const provisionedServices: ProvisionECSResult[] = [];
+  const provisionedServices: ProvisionServiceActivityResult[] = [];
 
   for (const service of manifest.services) {
     const buildRes = buildResults.find((b) => b.serviceName === service.name);
     const imageUri = buildRes?.imageUri || `shipora/${service.name}:latest`;
 
-    // 4a. Sync secrets for this service
-    const secretSyncRes = await syncSecretsActivity({
+    // 5a. Push secrets for this service
+    const secretPushRes = await pushSecretsActivity({
       projectId: input.projectId,
+      deploymentId: input.deploymentId,
       serviceName: service.name,
       detectedEnvVars: service.envVars || manifest.detectedEnvVars || [],
+      cloudProvider: provider,
+      connectionId,
     });
 
-    // 4b. Register ECS Task Definition and update ECS Service
-    const provisionRes = await provisionECSActivity({
+    // 5b. Provision compute workload
+    const provisionRes = await provisionServiceActivity({
       projectId: input.projectId,
+      deploymentId: input.deploymentId,
       serviceName: service.name,
       serviceType: service.type,
       port: service.port || 3000,
       imageUri,
-      taskEnvSecretRefs: secretSyncRes.taskEnvSecretRefs || [],
+      secretRefs: secretPushRes.secretRefs || secretPushRes.taskEnvSecretRefs || [],
+      cloudProvider: provider,
+      connectionId,
     });
 
     if (!provisionRes.success) {
-      const errorMsg = `ECS Provisioning failed for service '${service.name}': ${provisionRes.error}`;
+      const errorMsg = `Provisioning failed for service '${service.name}': ${provisionRes.error}`;
       progress = {
         ...progress,
         stage: "failed",
@@ -312,6 +366,7 @@ export async function deployWorkflow(
       return {
         success: false,
         deploymentId: input.deploymentId,
+        provider,
         servicesDeployed: provisionedServices.map((p) => p.serviceName),
         deployedUrls: {},
         summary: errorMsg,
@@ -322,12 +377,12 @@ export async function deployWorkflow(
     provisionedServices.push(provisionRes);
   }
 
-  // 5. Stage 5: Application Load Balancer Routing Configuration
+  // 6. Stage 5: Ingress and Routing Configuration
   progress = {
     ...progress,
     stage: "routing",
     percent: 85,
-    currentStep: "Configuring ALB Target Groups and Subdomain routing rules",
+    currentStep: `Configuring ${providerLabel} ingress routing and HTTPS endpoints`,
   };
 
   const deployedUrls: Record<string, string> = {};
@@ -335,25 +390,144 @@ export async function deployWorkflow(
 
   for (const service of manifest.services) {
     const prov = provisionedServices.find((p) => p.serviceName === service.name);
-    const albRes: AttachLoadBalancerResult = await attachLoadBalancerActivity({
+    const ingressRes: ConfigureIngressActivityResult = await configureIngressActivity({
       projectId: input.projectId,
+      deploymentId: input.deploymentId,
       serviceName: service.name,
       port: service.port || 3000,
-      ecsServiceArn: prov?.ecsServiceArn || `arn:aws:ecs:us-east-1:123456789012:service/shipora-cluster/${service.name}`,
+      cloudServiceId: prov?.cloudServiceId || prov?.ecsServiceArn || "",
       domainPrefix: `${service.name}-${input.repoName.toLowerCase()}`,
+      cloudProvider: provider,
+      connectionId,
     });
 
-    deployedUrls[service.name] = albRes.serviceUrl;
+    deployedUrls[service.name] = ingressRes.serviceUrl;
     deployedServiceNames.push(service.name);
   }
 
-  const successSummary = `Successfully deployed ${deployedServiceNames.length} service(s) to AWS ECS Fargate (${deployedServiceNames.join(", ")})`;
+  const successSummary = `Successfully deployed ${deployedServiceNames.length} service(s) to ${providerLabel} (${deployedServiceNames.join(", ")})`;
 
-  // 6. Complete and Report GitHub Status
+  // Build previousRevisionRefs map for rollback
+  const previousRevisionRefs: Record<string, { aws?: string; azure?: string }> = {};
+  for (const prov of provisionedServices) {
+    previousRevisionRefs[prov.serviceName] = {
+      aws: prov.previousTaskDefinitionArn,
+      azure: prov.previousRevisionName,
+    };
+  }
+
   progress = {
+    ...progress,
+    deployedUrls,
+    previousRevisionRefs,
+  };
+
+  // ── Stage 6: Health Verification ──────────────────────────────────────────
+  progress = {
+    ...progress,
+    stage: "verifying",
+    percent: 92,
+    currentStep: `Verifying health of ${deployedServiceNames.length} deployed service(s) via ${provider === "azure" ? "Azure Container App" : "ALB"} endpoints`,
+  };
+
+  const verifyTargets = manifest.services.map((s) => {
+    const prov = provisionedServices.find((p) => p.serviceName === s.name);
+    return {
+      serviceName: s.name,
+      serviceUrl: deployedUrls[s.name] || "",
+      cloudProvider: provider,
+      cloudServiceId: prov?.ecsServiceArn || prov?.cloudServiceId,
+      connectionId,
+    };
+  });
+
+  let verifyResult;
+  try {
+    verifyResult = await verifyDeploymentActivity({
+      deploymentId: input.deploymentId,
+      services: verifyTargets,
+      gracePeriodSeconds: 40,
+      pollIntervalSeconds: 10,
+      timeoutSeconds: 300,
+    });
+  } catch (err: unknown) {
+    verifyResult = { success: false, reason: (err as Error).message };
+  }
+
+  if (!verifyResult.success) {
+    // ── Stage 6b: Auto-Rollback ─────────────────────────────────────────────
+    const rollbackReason = verifyResult.reason || "Health check failed";
+
+    progress = {
+      ...progress,
+      stage: "rolling_back",
+      percent: 95,
+      currentStep: `Rolling back — ${rollbackReason}`,
+      error: rollbackReason,
+    };
+
+    const rollbackServices = provisionedServices.map((prov) => ({
+      serviceName: prov.serviceName,
+      cloudProvider: provider,
+      connectionId,
+      ecsServiceArn: prov.ecsServiceArn || prov.cloudServiceId,
+      previousTaskDefinitionArn: prov.previousTaskDefinitionArn,
+      // Azure fields would come from prov if the azure adapter returns them
+      containerAppName: undefined as string | undefined,
+      resourceGroup: undefined as string | undefined,
+      previousRevisionName: prov.previousRevisionName,
+    }));
+
+    try {
+      await rollbackActivity({
+        deploymentId: input.deploymentId,
+        projectId: input.projectId,
+        reason: rollbackReason,
+        services: rollbackServices,
+      });
+    } catch {
+      // rollback failure logged inside activity
+    }
+
+    const errorSummary = `Auto-rolled back — ${rollbackReason}`;
+    progress = {
+      ...progress,
+      stage: "failed",
+      percent: 100,
+      currentStep: errorSummary,
+    };
+
+    try {
+      await reportGitHubStatusActivity({
+        repoOwner: input.repoOwner,
+        repoName: input.repoName,
+        commitSha: input.commitSha,
+        installationId: input.installationId,
+        state: "failure",
+        description: `Shipora auto-rolled back: ${rollbackReason}`.slice(0, 140),
+        targetUrl,
+      });
+    } catch {
+      // Non-fatal
+    }
+
+    return {
+      success: false,
+      deploymentId: input.deploymentId,
+      provider,
+      servicesDeployed: deployedServiceNames,
+      deployedUrls,
+      summary: errorSummary,
+      error: errorSummary,
+    };
+  }
+
+  // 7. Complete and Report GitHub Status
+  progress = {
+    ...progress,
     stage: "completed",
     percent: 100,
-    currentStep: "Deployment completed successfully",
+    currentStep: "Deployment verified and live",
     deployedUrls,
     services: progress.services.map((s) => ({
       ...s,
@@ -379,6 +553,7 @@ export async function deployWorkflow(
   return {
     success: true,
     deploymentId: input.deploymentId,
+    provider,
     servicesDeployed: deployedServiceNames,
     deployedUrls,
     summary: successSummary,

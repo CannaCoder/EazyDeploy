@@ -11,9 +11,10 @@
     "type-check": "tsc --noEmit",
     "lint": "tsc --noEmit",
     "test": "vitest run",
-    "db:generate": "drizzle-kit generate",
-    "db:migrate": "drizzle-kit migrate",
-    "db:studio": "drizzle-kit studio"
+    "db:generate": "tsx node_modules/drizzle-kit/bin.cjs generate",
+    "db:migrate": "tsx node_modules/drizzle-kit/bin.cjs migrate",
+    "db:push": "tsx node_modules/drizzle-kit/bin.cjs push",
+    "db:studio": "tsx node_modules/drizzle-kit/bin.cjs studio"
   },
   "dependencies": {
     "@neondatabase/serverless": "^0.10.4",
@@ -22,7 +23,9 @@
   },
   "devDependencies": {
     "@shipora/config-typescript": "workspace:*",
+    "dotenv": "^17.4.2",
     "drizzle-kit": "^0.28.1",
+    "tsx": "^4.19.2",
     "typescript": "^5.6.3",
     "vitest": "^2.1.8"
   }

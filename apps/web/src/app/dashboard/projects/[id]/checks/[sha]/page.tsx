@@ -2,8 +2,9 @@
 
 export const dynamic = "force-dynamic";
 
-import React, { use, useState } from "react";
+import React, { useState } from "react";
 import Link from "next/link";
+import { useParams } from "next/navigation";
 import { trpc } from "../../../../../../lib/trpc";
 import {
   Button,
@@ -29,19 +30,22 @@ import {
   FileCheck,
 } from "lucide-react";
 
-export default function CommitCheckDetailPage({
-  params,
-}: {
-  params: Promise<{ id: string; sha: string }>;
-}) {
-  const resolvedParams = use(params);
-  const { id: projectId, sha: commitSha } = resolvedParams;
+export default function CommitCheckDetailPage() {
+  const params = useParams();
+  const projectId = (params?.id as string) || "";
+  const commitSha = (params?.sha as string) || "";
 
-  const { data: project } = trpc.project.getById.useQuery({ id: projectId });
-  const { data: check, isLoading, refetch } = trpc.conflictCheck.getByCommit.useQuery({
-    projectId,
-    commitSha,
-  });
+  const { data: project } = trpc.project.getById.useQuery(
+    { id: projectId },
+    { enabled: !!projectId }
+  );
+  const { data: check, isLoading, refetch } = trpc.conflictCheck.getByCommit.useQuery(
+    {
+      projectId,
+      commitSha,
+    },
+    { enabled: !!projectId && !!commitSha }
+  );
 
   const retryMutation = trpc.conflictCheck.retry.useMutation({
     onSuccess: () => {

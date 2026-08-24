@@ -18,15 +18,20 @@
     "@aws-sdk/client-ecs": "^3.726.0",
     "@aws-sdk/client-elastic-load-balancing-v2": "^3.726.0",
     "@aws-sdk/client-secrets-manager": "^3.726.0",
+    "@shipora/cloud-adapters": "workspace:*",
     "@shipora/code-analyzer": "workspace:*",
     "@shipora/db": "workspace:*",
     "@shipora/github-app": "workspace:*",
     "@shipora/temporal-workflows": "workspace:*",
     "@shipora/types": "workspace:*",
+    "drizzle-orm": "^0.36.4",
+
+    "@upstash/redis": "^1.34.3",
     "@temporalio/activity": "^1.11.7",
     "@temporalio/worker": "^1.11.7",
     "@temporalio/workflow": "^1.11.7"
   },
+
   "devDependencies": {
     "@shipora/config-typescript": "workspace:*",
     "@types/node": "^22.10.5",

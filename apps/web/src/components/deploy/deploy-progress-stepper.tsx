@@ -39,49 +39,64 @@ export interface DeployProgressProps {
     | string;
   percent?: number;
   currentStep?: string;
+  provider?: "aws" | "azure" | string;
   services?: ServiceDeployInfo[];
   deployedUrls?: Record<string, string>;
   error?: string;
 }
 
-const STAGES = [
-  {
-    key: "analyzing",
-    label: "Service Discovery",
-    description: "Detect monorepo services & build commands",
-    icon: Layers,
-  },
-  {
-    key: "building",
-    label: "CodeBuild Docker Builds",
-    description: "Parallel container builds pushed to ECR",
-    icon: Box,
-  },
-  {
-    key: "syncing_secrets",
-    label: "Secret Slicing",
-    description: "Inject AWS Secrets Manager valueFrom refs",
-    icon: KeyRound,
-  },
-  {
-    key: "provisioning",
-    label: "ECS Fargate Provisioning",
-    description: "Register task defs and scale services",
-    icon: Server,
-  },
-  {
-    key: "routing",
-    label: "ALB Subdomain Routing",
-    description: "Configure Target Groups & Listener Rules",
-    icon: Network,
-  },
-  {
-    key: "completed",
-    label: "Live & Deployed",
-    description: "All services online and healthy",
-    icon: Rocket,
-  },
-];
+function getStagesForProvider(provider?: string) {
+  const p = (provider || "aws").toLowerCase();
+  const isAzure = p === "azure";
+
+  return [
+    {
+      key: "analyzing",
+      label: "Service Discovery",
+      description: "Detect monorepo services & build commands",
+      icon: Layers,
+    },
+    {
+      key: "building",
+      label: isAzure ? "ACR Container Builds" : "CodeBuild Docker Builds",
+      description: isAzure
+        ? "Parallel container builds pushed to Azure ACR"
+        : "Parallel container builds pushed to AWS ECR",
+      icon: Box,
+    },
+    {
+      key: "syncing_secrets",
+      label: "Secret Slicing",
+      description: isAzure
+        ? "Inject Azure Key Vault secret references"
+        : "Inject AWS Secrets Manager valueFrom refs",
+      icon: KeyRound,
+    },
+    {
+      key: "provisioning",
+      label: isAzure ? "Container Apps Provisioning" : "ECS Fargate Provisioning",
+      description: isAzure
+        ? "Deploy Azure Container Apps & revisions"
+        : "Register task defs and scale ECS services",
+      icon: Server,
+    },
+    {
+      key: "routing",
+      label: isAzure ? "HTTPS Ingress Routing" : "ALB Subdomain Routing",
+      description: isAzure
+        ? "Configure Container Apps FQDN & TLS endpoints"
+        : "Configure Target Groups & Listener Rules",
+      icon: Network,
+    },
+    {
+      key: "completed",
+      label: "Live & Deployed",
+      description: "All services online and healthy",
+      icon: Rocket,
+    },
+  ];
+}
+
 
 function getStageIndex(stage: string): number {
   switch (stage) {
@@ -110,35 +125,44 @@ export function DeployProgressStepper({
   stage,
   percent,
   currentStep,
+  provider = "aws",
   services,
   deployedUrls,
   error,
 }: DeployProgressProps) {
   const isFailed = stage === "failed";
   const isCompleted = stage === "completed";
+  const stages = getStagesForProvider(provider);
   const currentIndex = getStageIndex(stage);
   const calculatedPercent =
     percent ?? (isCompleted ? 100 : isFailed ? 100 : Math.max(10, currentIndex * 20));
+
+  const providerName = provider.toUpperCase();
 
   return (
     <div className="space-y-6">
       {/* Progress Bar Header */}
       <div className="space-y-2">
         <div className="flex items-center justify-between text-xs">
-          <span className="font-semibold text-white uppercase tracking-wider flex items-center gap-2">
-            {isCompleted ? (
-              <CheckCircle2 className="h-4 w-4 text-emerald-400" />
-            ) : isFailed ? (
-              <XCircle className="h-4 w-4 text-rose-400" />
-            ) : (
-              <Spinner size="sm" />
-            )}
-            {isCompleted
-              ? "Deployment Complete"
-              : isFailed
-              ? "Deployment Failed"
-              : "Deploying Services"}
-          </span>
+          <div className="flex items-center gap-2">
+            <span className="font-semibold text-white uppercase tracking-wider flex items-center gap-2">
+              {isCompleted ? (
+                <CheckCircle2 className="h-4 w-4 text-emerald-400" />
+              ) : isFailed ? (
+                <XCircle className="h-4 w-4 text-rose-400" />
+              ) : (
+                <Spinner size="sm" />
+              )}
+              {isCompleted
+                ? "Deployment Complete"
+                : isFailed
+                ? "Deployment Failed"
+                : `Deploying Services to ${providerName}`}
+            </span>
+            <Badge variant="outline" className="text-[10px] uppercase font-mono">
+              {providerName}
+            </Badge>
+          </div>
           <span className="font-mono text-xs text-muted-foreground font-medium">
             {calculatedPercent}%
           </span>
@@ -165,11 +189,12 @@ export function DeployProgressStepper({
 
       {/* Stepper Timeline */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-        {STAGES.map((s, idx) => {
+        {stages.map((s, idx) => {
           const Icon = s.icon;
           const isDone = isCompleted || (!isFailed && currentIndex > idx);
           const isCurrent = !isCompleted && !isFailed && currentIndex === idx;
           const isStepFailed = isFailed && currentIndex === idx;
+
 
           return (
             <div
