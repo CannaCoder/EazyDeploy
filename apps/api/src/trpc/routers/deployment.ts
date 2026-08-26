@@ -201,6 +201,8 @@ export const deploymentRouter = router({
         projectId: z.string().uuid(),
         commitSha: z.string().optional(),
         branch: z.string().optional(),
+        envVars: z.record(z.string()).optional(),
+        serviceSecrets: z.record(z.record(z.string())).optional(),
       })
     )
     .mutation(async ({ ctx, input }) => {
@@ -306,6 +308,7 @@ export const deploymentRouter = router({
       }
 
       const cloudProvider = (project?.cloudProvider as CloudProvider) || DEFAULT_CLOUD_PROVIDER;
+      const envVars = input.envVars || (project as any)?.envVars || undefined;
 
       // Start Temporal Deploy Workflow
       const workflowResult = await startDeployWorkflow({
@@ -318,6 +321,8 @@ export const deploymentRouter = router({
         installationId: Number(project?.githubInstallationId) || 123456,
         cloudProvider,
         cloudConnectionId: project?.cloudConnectionId || undefined,
+        envVars,
+        serviceSecrets: input.serviceSecrets,
       });
 
       if (workflowResult?.workflowId) {

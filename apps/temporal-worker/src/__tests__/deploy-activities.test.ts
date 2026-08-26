@@ -9,6 +9,7 @@ import {
   provisionServiceActivity,
   configureIngressActivity,
   resolveCloudAdapterActivity,
+  deployStaticSiteActivity,
 } from "../activities/index.js";
 
 describe("Temporal Worker Deploy Activities (Phase 3 & Phase 3.5)", () => {
@@ -149,6 +150,28 @@ describe("Temporal Worker Deploy Activities (Phase 3 & Phase 3.5)", () => {
 
       expect(res.success).toBe(true);
       expect(res.serviceUrl).toContain("azurecontainerapps.io");
+    });
+
+    it("deployStaticSiteActivity uploads assets to S3 and returns CloudFront CDN URL", async () => {
+      const res = await deployStaticSiteActivity({
+        projectId: "proj-static-123",
+        deploymentId: "dep-static-001",
+        serviceName: "portfolio",
+        rootPath: ".",
+        repoOwner: "acme",
+        repoName: "my-portfolio",
+        commitSha: "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2",
+        branch: "main",
+        installationId: 123456,
+        cloudProvider: "aws",
+      });
+
+      expect(res.success).toBe(true);
+      expect(res.serviceName).toBe("portfolio");
+      expect(res.bucketName).toContain("proj-static-123");
+      expect(res.distributionId).toBeDefined();
+      expect(res.serviceUrl).toMatch(/^https?:\/\//);
+      expect(res.releasePrefix).toBe("releases/dep-static-001");
     });
   });
 });

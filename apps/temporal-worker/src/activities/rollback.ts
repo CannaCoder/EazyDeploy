@@ -6,6 +6,7 @@ import {
 import { db } from "@shipora/db";
 import { deployments, auditLogs } from "@shipora/db";
 import { eq } from "drizzle-orm";
+import { createCloudAdapter } from "@shipora/cloud-adapters";
 import { streamLogActivity } from "./stream-log.js";
 import type {
   RollbackActivityInput,
@@ -63,7 +64,9 @@ export async function rollbackActivity(
 
   for (const svc of services) {
     try {
-      if (svc.cloudProvider === "aws") {
+      if (svc.serviceType === "static" || svc.distributionId) {
+        await rollbackStatic(svc, deploymentId);
+      } else if (svc.cloudProvider === "aws") {
         await rollbackAWS(svc, deploymentId);
       } else if (svc.cloudProvider === "azure") {
         await rollbackAzure(svc, deploymentId);
@@ -258,6 +261,39 @@ async function rollbackAzure(svc: RollbackServiceRef, deploymentId: string): Pro
       });
     }
     throw err;
+  }
+}
+
+// ─── Static Site Rollback ───────────────────────────────────────────────────
+
+async function rollbackStatic(svc: RollbackServiceRef, deploymentId: string): Promise<void> {
+  const { serviceName, distributionId, previousReleasePrefix, bucketName } = svc;
+  if (!distributionId || !previousReleasePrefix) {
+    await streamLogActivity({
+      deploymentId,
+      serviceName,
+      logLine: `[rollback:static] No previous release prefix or distribution ID for '${serviceName}' — skipping`,
+      level: "warn",
+    });
+    return;
+  }
+
+  await streamLogActivity({
+    deploymentId,
+    serviceName,
+    logLine: `[rollback:static] Reverting CloudFront distribution ${distributionId} to ${previousReleasePrefix}...`,
+    level: "info",
+  });
+
+  const adapter = createCloudAdapter("aws");
+  if (adapter.rollbackStaticSite) {
+    await adapter.rollbackStaticSite({
+      projectId: "",
+      serviceName,
+      bucketName: bucketName || "",
+      distributionId,
+      previousReleasePrefix,
+    });
   }
 }
 

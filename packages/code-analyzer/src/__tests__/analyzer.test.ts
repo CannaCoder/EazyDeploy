@@ -40,4 +40,31 @@ describe("analyzeRepository", () => {
     expect(result.hasMergeConflicts).toBe(false);
     expect(result.isLockfileHealthy).toBe(true);
   });
+
+  it("detects pure static website (HTML/CSS/JS) with no env or backend", async () => {
+    const files = [
+      {
+        path: "index.html",
+        content: "<!DOCTYPE html><html><head><title>My Static App</title></head><body><h1>Hello</h1></body></html>",
+      },
+      {
+        path: "styles/style.css",
+        content: "body { background: #000; color: #fff; }",
+      },
+      {
+        path: "scripts/app.js",
+        content: "console.log('App loaded');",
+      },
+    ];
+
+    const result = await analyzeRepository(files);
+
+    expect(result.services).toHaveLength(1);
+    expect(result.services[0]!.name).toBe("main");
+    expect(result.services[0]!.type).toBe("static");
+    expect(result.services[0]!.port).toBe(80);
+    expect(result.services[0]!.buildCommand).toBeUndefined();
+    expect(result.detectedEnvVars).toHaveLength(0);
+    expect(result.hasMergeConflicts).toBe(false);
+  });
 });

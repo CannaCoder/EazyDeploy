@@ -32,7 +32,8 @@ export interface BuildImageResult {
 
 export interface SecretRef {
   name: string;
-  reference: string;
+  reference?: string;
+  value?: string;
 }
 
 export interface PushSecretsInput {
@@ -106,5 +107,44 @@ export interface TeardownInput {
 export interface TeardownResult {
   success: boolean;
   deletedResources: string[];
+  error?: string;
+}
+
+export interface StaticFileAsset {
+  path: string;
+  content: string | Buffer;
+  contentType?: string;
+}
+
+export interface DeployStaticSiteInput {
+  projectId: string;
+  serviceName: string;
+  deploymentId: string;
+  files?: StaticFileAsset[];
+  customDomain?: string;
+}
+
+export interface DeployStaticSiteResult {
+  success: boolean;
+  serviceName: string;
+  bucketName: string;
+  distributionId?: string;
+  serviceUrl: string;
+  releasePrefix: string;
+  error?: string;
+}
+
+export interface RollbackStaticSiteInput {
+  projectId: string;
+  serviceName: string;
+  bucketName: string;
+  distributionId: string;
+  previousReleasePrefix: string;
+}
+
+export interface RollbackStaticSiteResult {
+  success: boolean;
+  serviceName: string;
+  serviceUrl: string;
   error?: string;
 }

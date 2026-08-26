@@ -85,7 +85,7 @@ export function detectServices(files: (string | RepoFile)[]): DetectedService[] 
       let detectedPort = isFastify ? 4000 : isExpress ? 3000 : 3000;
       if (dockerfileContent) {
         const match = dockerfileContent.match(/EXPOSE\s+(\d+)/i);
-        if (match) detectedPort = parseInt(match[1], 10);
+        if (match && match[1]) detectedPort = parseInt(match[1], 10);
       }
 
       services.push({
@@ -125,7 +125,7 @@ export function detectServices(files: (string | RepoFile)[]): DetectedService[] 
       let detectedPort = 3000;
       if (dockerfileContent) {
         const match = dockerfileContent.match(/EXPOSE\s+(\d+)/i);
-        if (match) detectedPort = parseInt(match[1], 10);
+        if (match && match[1]) detectedPort = parseInt(match[1], 10);
       }
 
       services.push({
@@ -134,6 +134,21 @@ export function detectServices(files: (string | RepoFile)[]): DetectedService[] 
         rootPath: root,
         port: detectedPort,
         buildCommand: `docker build -t ${rootName} ${root}`,
+        envVars: [],
+      });
+      handledRoots.add(root);
+      continue;
+    }
+
+    // 6. Static Site (HTML/CSS/JS)
+    const hasHtml = rootFiles.some((p) => p.endsWith("index.html") || p.endsWith(".html"));
+    if (hasHtml) {
+      services.push({
+        name: rootName,
+        type: "static",
+        rootPath: root,
+        port: 80,
+        buildCommand: undefined,
         envVars: [],
       });
       handledRoots.add(root);

@@ -7,7 +7,7 @@ export const services = pgTable("services", {
     .notNull()
     .references(() => projects.id, { onDelete: "cascade" }),
   name: text("name").notNull(),
-  type: text("type").notNull(), // nextjs | vite | node | fastapi | docker
+  type: text("type").notNull(), // nextjs | vite | node | fastapi | docker | static
   rootPath: text("root_path").notNull(),
   port: integer("port"),
   buildCommand: text("build_command"),
@@ -20,6 +20,9 @@ export const services = pgTable("services", {
   currentRevision: text("current_revision"),
   previousRevision: text("previous_revision"),
   serviceUrl: text("service_url"),
+  // Static hosting (S3 + CloudFront / Blob + CDN)
+  bucketName: text("bucket_name"),
+  cdnDistributionId: text("cdn_distribution_id"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 

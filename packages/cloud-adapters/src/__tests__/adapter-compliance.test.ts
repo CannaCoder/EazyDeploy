@@ -97,6 +97,39 @@ describe("CloudProviderAdapter Compliance Suite", () => {
         expect(res.success).toBe(true);
         expect(res.deletedResources.length).toBeGreaterThan(0);
       });
+
+      it("deploys static site assets and returns live preview URL", async () => {
+        const res = await instance.deployStaticSite!({
+          projectId: "proj-12345",
+          serviceName: "landing",
+          deploymentId: "dep-abc1234",
+          files: [
+            { path: "index.html", content: "<h1>Hello World</h1>" },
+            { path: "style.css", content: "body { margin: 0; }" },
+          ],
+        });
+
+        expect(res.success).toBe(true);
+        expect(res.serviceName).toBe("landing");
+        expect(res.bucketName).toBeDefined();
+        expect(res.distributionId).toBeDefined();
+        expect(res.serviceUrl).toMatch(/^https?:\/\//);
+        expect(res.releasePrefix).toBe("releases/dep-abc1234");
+      });
+
+      it("rolls back static site CDN distribution", async () => {
+        const res = await instance.rollbackStaticSite!({
+          projectId: "proj-12345",
+          serviceName: "landing",
+          bucketName: "shipora-static-proj-12345",
+          distributionId: "E12345EXAMPLE",
+          previousReleasePrefix: "releases/dep-prev9999",
+        });
+
+        expect(res.success).toBe(true);
+        expect(res.serviceName).toBe("landing");
+        expect(res.serviceUrl).toMatch(/^https?:\/\//);
+      });
     });
   });
 

@@ -7,11 +7,12 @@ export const ProjectSchema = z.object({
   name: z.string().min(1, "Project name is required"),
   githubRepoOwner: z.string().min(1, "GitHub repo owner is required"),
   githubRepoName: z.string().min(1, "GitHub repo name is required"),
-  githubInstallationId: z.number().int().positive("Installation ID must be positive"),
+  githubInstallationId: z.number().int().min(0).default(0),
   productionBranch: z.string().default("main"),
   envSecretArn: z.string().nullable().optional(),
   cloudProvider: CloudProviderEnum.default("aws"),
   cloudConnectionId: z.string().nullable().optional(),
+  envVars: z.record(z.string()).optional(),
   createdAt: z.date().default(() => new Date()),
 });
 
@@ -22,6 +23,7 @@ export const CreateProjectSchema = ProjectSchema.omit({
   productionBranch: z.string().default("main").optional(),
   cloudProvider: CloudProviderEnum.default("aws").optional(),
   cloudConnectionId: z.string().nullable().optional(),
+  envVars: z.record(z.string()).optional(),
 });
 
 export const UpdateProjectSchema = CreateProjectSchema.partial();

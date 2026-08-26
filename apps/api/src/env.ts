@@ -22,6 +22,7 @@ const EnvSchema = z.object({
   AZURE_TENANT_ID: z.string().default("23543db5-54c7-4b3a-b22c-5f84b5594471"),
   AZURE_CLIENT_ID: z.string().default("00000000-0000-0000-0000-000000000000"),
   AZURE_CLIENT_SECRET: z.string().optional(),
+  AZURE_SUBSCRIPTION_ID: z.string().optional(),
   AZURE_REDIRECT_URI: z.string().default("http://localhost:4000/auth/azure/callback"),
 });
 

@@ -26,6 +26,8 @@ export interface DeployWorkflowInput {
   cloudProvider?: CloudProvider;
   cloudConnectionId?: string;
   dashboardUrl?: string;
+  envVars?: Record<string, string>;
+  serviceSecrets?: Record<string, Record<string, string>>;
 }
 
 export interface ServiceDeployStatus {
@@ -93,6 +95,7 @@ const {
   pushSecretsActivity,
   provisionServiceActivity,
   configureIngressActivity,
+  deployStaticSiteActivity,
 } = proxyActivities<DeployActivities>({
   startToCloseTimeout: "15 minutes",
   retry: {
@@ -234,12 +237,21 @@ export async function deployWorkflow(
     ...progress,
     stage: "building",
     percent: 30,
-    currentStep: `Building container images for ${manifest.services.length} service(s) via ${providerLabel}`,
+    currentStep: `Building and preparing ${manifest.services.length} service(s) via ${providerLabel}`,
     services: progress.services.map((s) => ({ ...s, stage: "building" })),
   };
 
   const buildResults: BuildImageActivityResult[] = await Promise.all(
     manifest.services.map(async (service) => {
+      // Pure static sites bypass heavy container builds
+      if (service.type === "static") {
+        return {
+          success: true,
+          serviceName: service.name,
+          imageUri: "s3-cloudfront-static",
+        };
+      }
+
       try {
         const buildRes = await buildImageActivity({
           projectId: input.projectId,
@@ -317,26 +329,81 @@ export async function deployWorkflow(
     }),
   };
 
-  // 5. Stage 3 & 4: Secret Syncing & Compute Provisioning per Service
+  // 5. Stage 3 & 4: Secret Syncing & Compute / Static Provisioning per Service
   progress = {
     ...progress,
     stage: "provisioning",
     percent: 60,
-    currentStep: `Injecting secrets and provisioning ${providerLabel} compute workloads`,
+    currentStep: `Deploying services to ${providerLabel}`,
   };
 
   const provisionedServices: ProvisionServiceActivityResult[] = [];
+  const deployedUrls: Record<string, string> = {};
+  const deployedServiceNames: string[] = [];
 
   for (const service of manifest.services) {
+    if (service.type === "static") {
+      // Direct Static Deployment to S3 + CloudFront CDN
+      const staticRes = await deployStaticSiteActivity({
+        projectId: input.projectId,
+        deploymentId: input.deploymentId,
+        serviceName: service.name,
+        rootPath: service.rootPath,
+        repoOwner: input.repoOwner,
+        repoName: input.repoName,
+        commitSha: input.commitSha,
+        branch: input.branch,
+        installationId: input.installationId,
+        cloudProvider: provider,
+        connectionId,
+      });
+
+      if (!staticRes.success) {
+        const errorMsg = `Static site deployment failed for '${service.name}': ${staticRes.error}`;
+        progress = {
+          ...progress,
+          stage: "failed",
+          percent: 100,
+          currentStep: errorMsg,
+          error: errorMsg,
+        };
+        return {
+          success: false,
+          deploymentId: input.deploymentId,
+          provider,
+          servicesDeployed: provisionedServices.map((p) => p.serviceName),
+          deployedUrls: {},
+          summary: errorMsg,
+          error: errorMsg,
+        };
+      }
+
+      provisionedServices.push({
+        success: true,
+        serviceName: service.name,
+        cloudServiceId: staticRes.distributionId || staticRes.bucketName,
+        currentRevision: staticRes.releasePrefix,
+      });
+      deployedUrls[service.name] = staticRes.serviceUrl;
+      deployedServiceNames.push(service.name);
+      continue;
+    }
+
     const buildRes = buildResults.find((b) => b.serviceName === service.name);
     const imageUri = buildRes?.imageUri || `shipora/${service.name}:latest`;
 
     // 5a. Push secrets for this service
+    const serviceSecrets =
+      input.serviceSecrets?.[service.name] ||
+      input.envVars ||
+      {};
+
     const secretPushRes = await pushSecretsActivity({
       projectId: input.projectId,
       deploymentId: input.deploymentId,
       serviceName: service.name,
       detectedEnvVars: service.envVars || manifest.detectedEnvVars || [],
+      secrets: Object.keys(serviceSecrets).length > 0 ? serviceSecrets : undefined,
       cloudProvider: provider,
       connectionId,
     });
@@ -377,7 +444,7 @@ export async function deployWorkflow(
     provisionedServices.push(provisionRes);
   }
 
-  // 6. Stage 5: Ingress and Routing Configuration
+  // 6. Stage 5: Ingress and Routing Configuration for container services
   progress = {
     ...progress,
     stage: "routing",
@@ -385,10 +452,9 @@ export async function deployWorkflow(
     currentStep: `Configuring ${providerLabel} ingress routing and HTTPS endpoints`,
   };
 
-  const deployedUrls: Record<string, string> = {};
-  const deployedServiceNames: string[] = [];
-
   for (const service of manifest.services) {
+    if (service.type === "static") continue; // Already configured during static deployment
+
     const prov = provisionedServices.find((p) => p.serviceName === service.name);
     const ingressRes: ConfigureIngressActivityResult = await configureIngressActivity({
       projectId: input.projectId,
@@ -446,7 +512,7 @@ export async function deployWorkflow(
     verifyResult = await verifyDeploymentActivity({
       deploymentId: input.deploymentId,
       services: verifyTargets,
-      gracePeriodSeconds: 40,
+      gracePeriodSeconds: provider === "azure" ? 120 : 40,
       pollIntervalSeconds: 10,
       timeoutSeconds: 300,
     });
@@ -466,17 +532,25 @@ export async function deployWorkflow(
       error: rollbackReason,
     };
 
-    const rollbackServices = provisionedServices.map((prov) => ({
-      serviceName: prov.serviceName,
-      cloudProvider: provider,
-      connectionId,
-      ecsServiceArn: prov.ecsServiceArn || prov.cloudServiceId,
-      previousTaskDefinitionArn: prov.previousTaskDefinitionArn,
-      // Azure fields would come from prov if the azure adapter returns them
-      containerAppName: undefined as string | undefined,
-      resourceGroup: undefined as string | undefined,
-      previousRevisionName: prov.previousRevisionName,
-    }));
+    const rollbackServices = provisionedServices.map((prov) => {
+      const svcDef = manifest.services.find((s) => s.name === prov.serviceName);
+      return {
+        serviceName: prov.serviceName,
+        cloudProvider: provider,
+        connectionId,
+        serviceType: svcDef?.type,
+        // Static hosting
+        distributionId: svcDef?.type === "static" ? prov.cloudServiceId : undefined,
+        previousReleasePrefix: svcDef?.type === "static" ? prov.previousRevisionName : undefined,
+        // AWS ECS
+        ecsServiceArn: prov.ecsServiceArn || prov.cloudServiceId,
+        previousTaskDefinitionArn: prov.previousTaskDefinitionArn,
+        // Azure
+        containerAppName: undefined as string | undefined,
+        resourceGroup: undefined as string | undefined,
+        previousRevisionName: prov.previousRevisionName,
+      };
+    });
 
     try {
       await rollbackActivity({

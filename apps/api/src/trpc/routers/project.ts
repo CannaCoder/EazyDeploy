@@ -81,6 +81,7 @@ export const projectRouter = router({
         envSecretArn: input.envSecretArn || null,
         cloudProvider: input.cloudProvider || DEFAULT_CLOUD_PROVIDER,
         cloudConnectionId: input.cloudConnectionId || null,
+        envVars: input.envVars || undefined,
         createdAt: new Date(),
       };
 

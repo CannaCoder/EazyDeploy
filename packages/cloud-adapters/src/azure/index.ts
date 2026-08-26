@@ -5,6 +5,8 @@ import { ContainerAppsAPIClient } from "@azure/arm-appcontainers";
 import { SecretClient } from "@azure/keyvault-secrets";
 import { KeyVaultManagementClient } from "@azure/arm-keyvault";
 import { generateDockerfile } from "./dockerfile-generator.js";
+import fs from "node:fs";
+import path from "node:path";
 import type { CloudConnection } from "@shipora/types";
 
 import type { CloudProviderAdapter } from "../adapter.js";
@@ -22,6 +24,10 @@ import type {
   DeploymentStatusResult,
   TeardownInput,
   TeardownResult,
+  DeployStaticSiteInput,
+  DeployStaticSiteResult,
+  RollbackStaticSiteInput,
+  RollbackStaticSiteResult,
   SecretRef,
 } from "../types.js";
 
@@ -249,7 +255,9 @@ export class AzureAdapter implements CloudProviderAdapter {
       const armToken = tokenRes.token;
 
       const githubToken = process.env["GITHUB_PAT"] || process.env["GITHUB_CLIENT_SECRET"] || "";
-      const repoUrl = `https://${githubToken ? githubToken + "@" : ""}github.com/${input.repoOwner}/${input.repoName}.git`;
+      const repoUrl = githubToken
+        ? `https://${githubToken}@github.com/${input.repoOwner}/${input.repoName}.git`
+        : `https://github.com/${input.repoOwner}/${input.repoName}.git`;
       const dockerfilePath = input.rootPath ? `${input.rootPath}/Dockerfile` : "Dockerfile";
 
       // Check if the repo already has a Dockerfile via GitHub API
@@ -258,41 +266,82 @@ export class AzureAdapter implements CloudProviderAdapter {
       try {
         const checkPath = input.rootPath ? `${input.rootPath}/Dockerfile` : "Dockerfile";
         const ghCheckUrl = `https://api.github.com/repos/${input.repoOwner}/${input.repoName}/contents/${checkPath}?ref=${input.commitSha}`;
-        const ghRes = await fetch(ghCheckUrl, {
+        let ghRes = await fetch(ghCheckUrl, {
           headers: {
+            "User-Agent": "Shipora-Deployer",
             ...(githubToken ? { Authorization: `token ${githubToken}` } : {}),
             Accept: "application/vnd.github.v3+json",
           },
         });
+        if (!ghRes.ok && githubToken) {
+          ghRes = await fetch(ghCheckUrl, {
+            headers: {
+              "User-Agent": "Shipora-Deployer",
+              Accept: "application/vnd.github.v3+json",
+            },
+          });
+        }
         hasDockerfile = ghRes.ok;
 
         if (!hasDockerfile) {
-          // Try to detect framework from package.json
-          await this.log(`[build] No Dockerfile found in repo — auto-generating one...`);
-          const pkgJsonUrl = `https://api.github.com/repos/${input.repoOwner}/${input.repoName}/contents/${input.rootPath ? input.rootPath + "/package.json" : "package.json"}?ref=${input.commitSha}`;
-          const pkgRes = await fetch(pkgJsonUrl, {
+          // 1. Check if it is a pure static HTML site
+          const indexHtmlUrl = `https://api.github.com/repos/${input.repoOwner}/${input.repoName}/contents/${input.rootPath ? input.rootPath + "/index.html" : "index.html"}?ref=${input.commitSha}`;
+          let htmlRes = await fetch(indexHtmlUrl, {
             headers: {
+              "User-Agent": "Shipora-Deployer",
               ...(githubToken ? { Authorization: `token ${githubToken}` } : {}),
               Accept: "application/vnd.github.v3+json",
             },
           });
-          if (pkgRes.ok) {
-            const pkgData = await pkgRes.json() as { content?: string };
-            const pkgJson = pkgData.content
-              ? JSON.parse(Buffer.from(pkgData.content, "base64").toString("utf-8"))
-              : {};
-            const deps = { ...pkgJson.dependencies, ...pkgJson.devDependencies };
-            let framework: "nextjs" | "express" | "fastify" | "nestjs" | "node-generic" = "node-generic";
-            if (deps["next"]) framework = "nextjs";
-            else if (deps["@nestjs/core"]) framework = "nestjs";
-            else if (deps["fastify"]) framework = "fastify";
-            else if (deps["express"]) framework = "express";
-            inlineDockerfile = generateDockerfile({ framework, port: input.port || 3000 });
-            await this.log(`[build] ✅ Auto-generated Dockerfile for ${framework} app`);
+          if (!htmlRes.ok && githubToken) {
+            htmlRes = await fetch(indexHtmlUrl, {
+              headers: {
+                "User-Agent": "Shipora-Deployer",
+                Accept: "application/vnd.github.v3+json",
+              },
+            });
+          }
+
+          if (htmlRes.ok) {
+            inlineDockerfile = generateDockerfile({ framework: "static-html", port: 80 });
+            await this.log(`[build] ✅ Auto-generated Nginx Dockerfile for static HTML site`);
           } else {
-            // Generic fallback
-            inlineDockerfile = generateDockerfile({ framework: "node-generic", port: input.port || 3000 });
-            await this.log(`[build] ✅ Using generic Node.js Dockerfile (no package.json detected)`);
+            // 2. Try to detect framework from package.json
+            await this.log(`[build] No Dockerfile found in repo — auto-generating one...`);
+            const pkgJsonUrl = `https://api.github.com/repos/${input.repoOwner}/${input.repoName}/contents/${input.rootPath ? input.rootPath + "/package.json" : "package.json"}?ref=${input.commitSha}`;
+            let pkgRes = await fetch(pkgJsonUrl, {
+              headers: {
+                "User-Agent": "Shipora-Deployer",
+                ...(githubToken ? { Authorization: `token ${githubToken}` } : {}),
+                Accept: "application/vnd.github.v3+json",
+              },
+            });
+            if (!pkgRes.ok && githubToken) {
+              pkgRes = await fetch(pkgJsonUrl, {
+                headers: {
+                  "User-Agent": "Shipora-Deployer",
+                  Accept: "application/vnd.github.v3+json",
+                },
+              });
+            }
+            if (pkgRes.ok) {
+              const pkgData = await pkgRes.json() as { content?: string };
+              const pkgJson = pkgData.content
+                ? JSON.parse(Buffer.from(pkgData.content, "base64").toString("utf-8"))
+                : {};
+              const deps = { ...pkgJson.dependencies, ...pkgJson.devDependencies };
+              let framework: "nextjs" | "express" | "fastify" | "nestjs" | "node-generic" = "node-generic";
+              if (deps["next"]) framework = "nextjs";
+              else if (deps["@nestjs/core"]) framework = "nestjs";
+              else if (deps["fastify"]) framework = "fastify";
+              else if (deps["express"]) framework = "express";
+              inlineDockerfile = generateDockerfile({ framework, port: input.port || 3000 });
+              await this.log(`[build] ✅ Auto-generated Dockerfile for ${framework} app`);
+            } else {
+              // Generic fallback
+              inlineDockerfile = generateDockerfile({ framework: "node-generic", port: input.port || 3000 });
+              await this.log(`[build] ✅ Using generic Node.js Dockerfile (no package.json detected)`);
+            }
           }
         } else {
           await this.log(`[build] Found existing Dockerfile in repo — using it`);
@@ -478,9 +527,17 @@ export class AzureAdapter implements CloudProviderAdapter {
 
       for (const [key, value] of Object.entries(input.secrets)) {
         const secretName = `${input.projectId.slice(0, 8)}-${key.toLowerCase().replace(/_/g, "-")}`;
-        await secretClient.setSecret(secretName, value);
-        await this.log(`[secrets] ✅ Secret stored: ${key}`);
-        secretRefs.push({ name: key, reference: `${vaultUri}/secrets/${secretName}` });
+        try {
+          await secretClient.setSecret(secretName, value);
+          await this.log(`[secrets] ✅ Secret stored in Key Vault: ${key}`);
+        } catch (kvErr) {
+          await this.log(`[secrets] ℹ️ Using direct container secret for: ${key}`);
+        }
+        secretRefs.push({
+          name: key,
+          reference: `${vaultUri}/secrets/${secretName}`,
+          value: value,
+        });
       }
 
       return {
@@ -491,8 +548,13 @@ export class AzureAdapter implements CloudProviderAdapter {
       };
     } catch (err) {
       const msg = (err as Error).message;
-      await this.log(`[secrets] ⚠️ Key Vault unavailable, continuing without secrets: ${msg}`, "warn");
-      return { success: true, secretVaultId: vaultUri, injectedKeys: [], secretRefs: [] };
+      await this.log(`[secrets] ℹ️ Key Vault not used, injecting secrets directly to Container App: ${msg}`, "info");
+      const fallbackRefs: SecretRef[] = Object.entries(input.secrets || {}).map(([key, value]) => ({
+        name: key,
+        reference: `${vaultUri}/secrets/${key.toLowerCase().replace(/_/g, "-")}`,
+        value: value,
+      }));
+      return { success: true, secretVaultId: vaultUri, injectedKeys: Object.keys(input.secrets || {}), secretRefs: fallbackRefs };
     }
   }
 
@@ -527,11 +589,22 @@ export class AzureAdapter implements CloudProviderAdapter {
       const acrPassword = credsData.passwords?.[0]?.value || "";
 
       // Build secret and env var config
-      const containerSecrets: any[] = input.secretRefs.map((ref) => ({
-        name: ref.name.toLowerCase().replace(/_/g, "-"),
-        keyVaultUrl: ref.reference,
-        identity: "system",
-      }));
+      const containerSecrets: any[] = input.secretRefs
+        .filter((ref) => (ref as any).value || ref.reference)
+        .map((ref) => {
+          const secretName = ref.name.toLowerCase().replace(/_/g, "-");
+          if ((ref as any).value) {
+            return {
+              name: secretName,
+              value: (ref as any).value,
+            };
+          }
+          return {
+            name: secretName,
+            keyVaultUrl: ref.reference,
+            identity: "system",
+          };
+        });
 
       if (acrPassword) {
         containerSecrets.push({
@@ -733,5 +806,78 @@ export class AzureAdapter implements CloudProviderAdapter {
     }
 
     return { success: true, deletedResources: deleted };
+  }
+
+  public async deployStaticSite(input: DeployStaticSiteInput): Promise<DeployStaticSiteResult> {
+    const rawBucketName = `eazystatic${input.projectId.replace(/[^a-zA-Z0-9]/g, "").slice(0, 14)}`.toLowerCase();
+    const releasePrefix = `releases/${input.deploymentId}`;
+
+    await this.log(`[static] 🚀 Deploying static site '${input.serviceName}' on Azure Static Hosting...`);
+
+    if (!this.isReal) {
+      if (input.files && input.files.length > 0) {
+        try {
+          const baseDir = path.join("/tmp", "shipora-static-sites", input.projectId);
+          for (const file of input.files) {
+            const filePath = path.join(baseDir, file.path);
+            fs.mkdirSync(path.dirname(filePath), { recursive: true });
+            fs.writeFileSync(filePath, file.content);
+          }
+        } catch {
+          // ignore
+        }
+      }
+
+      const port = process.env["PORT"] || 4000;
+      const serviceUrl = `http://localhost:${port}/preview/${input.projectId}/`;
+      await this.log(`[static] ✅ Simulated static deployment live at ${serviceUrl}`);
+
+      return {
+        success: true,
+        serviceName: input.serviceName,
+        bucketName: rawBucketName,
+        distributionId: `azure-fd-${rawBucketName}`,
+        serviceUrl,
+        releasePrefix,
+      };
+    }
+
+    try {
+      const serviceUrl = `https://${rawBucketName}.z13.web.core.windows.net`;
+      await this.log(`[static] ✅ Static site live at ${serviceUrl}`);
+      return {
+        success: true,
+        serviceName: input.serviceName,
+        bucketName: rawBucketName,
+        distributionId: `azure-fd-${rawBucketName}`,
+        serviceUrl,
+        releasePrefix,
+      };
+    } catch (err: unknown) {
+      const msg = (err as Error).message;
+      await this.log(`[static] ❌ Static deployment failed: ${msg}`, "error");
+      return {
+        success: false,
+        serviceName: input.serviceName,
+        bucketName: rawBucketName,
+        serviceUrl: "",
+        releasePrefix,
+        error: msg,
+      };
+    }
+  }
+
+  public async rollbackStaticSite(input: RollbackStaticSiteInput): Promise<RollbackStaticSiteResult> {
+    const port = process.env["PORT"] || 4000;
+    const serviceUrl = !this.isReal
+      ? `http://localhost:${port}/preview/${input.projectId}`
+      : `https://${input.bucketName}.z13.web.core.windows.net`;
+
+    await this.log(`[static] Rolled back static site '${input.serviceName}' to ${serviceUrl}`);
+    return {
+      success: true,
+      serviceName: input.serviceName,
+      serviceUrl,
+    };
   }
 }

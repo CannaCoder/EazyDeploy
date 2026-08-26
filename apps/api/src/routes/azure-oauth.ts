@@ -75,7 +75,7 @@ export const azureOAuthRoutes: FastifyPluginAsync = async (fastify) => {
           headers: { "Content-Type": "application/x-www-form-urlencoded" },
           body: new URLSearchParams({
             client_id: env.AZURE_CLIENT_ID,
-            client_secret: env.AZURE_CLIENT_SECRET,
+            client_secret: env.AZURE_CLIENT_SECRET || "",
             code,
             redirect_uri: env.AZURE_REDIRECT_URI,
             grant_type: "authorization_code",
@@ -148,7 +148,7 @@ export const azureOAuthRoutes: FastifyPluginAsync = async (fastify) => {
         fastify.log.warn("[Azure OAuth] Graph API unavailable — using platform SP as fallback");
       }
     } catch (err) {
-      fastify.log.warn("[Azure OAuth] SP auto-creation failed, using platform credentials:", (err as Error).message);
+      fastify.log.warn(`[Azure OAuth] SP auto-creation failed, using platform credentials: ${(err as Error).message}`);
     }
 
     // Step 5: Store encrypted credentials
@@ -191,7 +191,7 @@ export const azureOAuthRoutes: FastifyPluginAsync = async (fastify) => {
         });
       }
     } catch (dbErr) {
-      fastify.log.warn("[Azure OAuth] DB insert warning:", (dbErr as Error).message);
+      fastify.log.warn(`[Azure OAuth] DB insert warning: ${(dbErr as Error).message}`);
     }
 
     return reply.redirect(`${webDashboardUrl}${returnTo}?status=connected&provider=azure&connectionId=${connectionId}`);

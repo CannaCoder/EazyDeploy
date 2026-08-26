@@ -39,6 +39,7 @@ export interface SecretRef {
   name: string;
   reference?: string;
   valueFrom?: string; // backward compat alias
+  value?: string;
 }
 
 export interface PushSecretsActivityInput {
@@ -153,11 +154,40 @@ export interface VerifyDeploymentActivityResult {
   latencyMs?: number;
 }
 
+export interface DeployStaticSiteActivityInput {
+  projectId: string;
+  deploymentId: string;
+  serviceName: string;
+  rootPath: string;
+  repoOwner: string;
+  repoName: string;
+  commitSha: string;
+  branch: string;
+  installationId: number;
+  cloudProvider?: CloudProvider;
+  connectionId?: string;
+}
+
+export interface DeployStaticSiteActivityResult {
+  success: boolean;
+  serviceName: string;
+  bucketName: string;
+  distributionId?: string;
+  serviceUrl: string;
+  releasePrefix: string;
+  error?: string;
+}
+
 export interface RollbackServiceRef {
   serviceName: string;
   cloudProvider: CloudProvider;
   connectionId?: string;
-  // AWS
+  serviceType?: ServiceType;
+  // AWS Static
+  bucketName?: string;
+  distributionId?: string;
+  previousReleasePrefix?: string;
+  // AWS ECS
   ecsServiceArn?: string;
   previousTaskDefinitionArn?: string;
   // Azure
@@ -197,6 +227,7 @@ export interface DeployActivities {
   pushSecretsActivity(input: PushSecretsActivityInput): Promise<PushSecretsActivityResult>;
   provisionServiceActivity(input: ProvisionServiceActivityInput): Promise<ProvisionServiceActivityResult>;
   configureIngressActivity(input: ConfigureIngressActivityInput): Promise<ConfigureIngressActivityResult>;
+  deployStaticSiteActivity(input: DeployStaticSiteActivityInput): Promise<DeployStaticSiteActivityResult>;
   // Phase 4
   streamLogActivity(input: StreamLogActivityInput): Promise<StreamLogActivityResult>;
   verifyDeploymentActivity(input: VerifyDeploymentActivityInput): Promise<VerifyDeploymentActivityResult>;

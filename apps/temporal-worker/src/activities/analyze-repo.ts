@@ -34,18 +34,31 @@ export async function analyzeRepoActivity(
     }
   }
 
-  // Fallback: fetch tree via direct GitHub API using GITHUB_PAT if available
-  if (treeItems.length === 0 && process.env["GITHUB_PAT"]) {
+  // Fallback 1: fetch tree via direct GitHub API (with PAT if valid, or unauthenticated public)
+  if (treeItems.length === 0) {
     try {
-      const ghRes = await fetch(
+      let ghRes = await fetch(
         `https://api.github.com/repos/${input.repoOwner}/${input.repoName}/git/trees/${targetRef}?recursive=1`,
         {
           headers: {
-            Authorization: `token ${process.env["GITHUB_PAT"]}`,
+            "User-Agent": "Shipora-Deployer",
             Accept: "application/vnd.github.v3+json",
+            ...(process.env["GITHUB_PAT"] ? { Authorization: `token ${process.env["GITHUB_PAT"]}` } : {}),
           },
         }
       );
+      if (!ghRes.ok && process.env["GITHUB_PAT"]) {
+        // Retry unauthenticated for public repos from different GitHub accounts
+        ghRes = await fetch(
+          `https://api.github.com/repos/${input.repoOwner}/${input.repoName}/git/trees/${targetRef}?recursive=1`,
+          {
+            headers: {
+              "User-Agent": "Shipora-Deployer",
+              Accept: "application/vnd.github.v3+json",
+            },
+          }
+        );
+      }
       if (ghRes.ok) {
         const ghData = (await ghRes.json()) as { tree?: any[] };
         treeItems = ghData.tree || [];
@@ -102,23 +115,39 @@ export async function analyzeRepoActivity(
   for (const item of filesToFetch) {
     if (!item.path || !item.sha) continue;
 
-    try {
-      if (octokit) {
+    let content: string | undefined = undefined;
+
+    if (octokit) {
+      try {
         const blob = await octokit.rest.git.getBlob({
           owner: input.repoOwner,
           repo: input.repoName,
           file_sha: item.sha,
         });
 
-        const content = Buffer.from(blob.data.content, "base64").toString("utf-8");
-        repoFiles.push({
-          path: item.path,
-          content,
-        });
+        content = Buffer.from(blob.data.content, "base64").toString("utf-8");
+      } catch {
+        // fallback to public raw fetch below
       }
-    } catch {
-      repoFiles.push({ path: item.path });
     }
+
+    if (!content) {
+      try {
+        const rawRes = await fetch(
+          `https://raw.githubusercontent.com/${input.repoOwner}/${input.repoName}/${targetRef}/${item.path}`
+        );
+        if (rawRes.ok) {
+          content = await rawRes.text();
+        }
+      } catch {
+        // ignore
+      }
+    }
+
+    repoFiles.push({
+      path: item.path,
+      content,
+    });
   }
 
   // Run code analyzer

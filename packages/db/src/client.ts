@@ -13,5 +13,17 @@ export function createDbClient(connectionString?: string) {
   return drizzle(sql, { schema });
 }
 
-export const db = createDbClient();
 export type Database = ReturnType<typeof createDbClient>;
+
+// Lazy singleton — created on first access so that DATABASE_URL is guaranteed
+// to be present in process.env regardless of module load order (e.g. when
+// worker.ts calls loadEnvSafe() after the module graph is resolved).
+let _db: Database | undefined;
+export const db: Database = new Proxy({} as Database, {
+  get(_target, prop) {
+    if (!_db) {
+      _db = createDbClient();
+    }
+    return (_db as unknown as Record<string | symbol, unknown>)[prop];
+  },
+});

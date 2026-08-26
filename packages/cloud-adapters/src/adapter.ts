@@ -56,4 +56,14 @@ export interface CloudProviderAdapter {
    * Tear down and delete all Shipora-tagged resources on project deletion.
    */
   teardown(input: TeardownInput): Promise<TeardownResult>;
+
+  /**
+   * Deploy static site assets directly to Object Storage (S3 / Blob) + CDN (CloudFront / Front Door).
+   */
+  deployStaticSite?(input: import("./types.js").DeployStaticSiteInput): Promise<import("./types.js").DeployStaticSiteResult>;
+
+  /**
+   * Roll back static site CDN distribution to point to previous release prefix.
+   */
+  rollbackStaticSite?(input: import("./types.js").RollbackStaticSiteInput): Promise<import("./types.js").RollbackStaticSiteResult>;
 }

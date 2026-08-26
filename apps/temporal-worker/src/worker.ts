@@ -23,8 +23,8 @@ function loadEnvSafe() {
         let match: RegExpExecArray | null;
 
         while ((match = envRegex.exec(content)) !== null) {
-          const key = match[1].trim();
-          let val = match[2];
+          const key = match[1]?.trim();
+          let val = match[2] || "";
 
           // Strip surrounding quotes and unescape \n, \t etc inside quoted strings
           if ((val.startsWith('"') && val.endsWith('"')) ||

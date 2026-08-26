@@ -6,6 +6,7 @@ export const ServiceTypeEnum = z.enum([
   "node",
   "fastapi",
   "docker",
+  "static",
 ]);
 
 export const ServiceSchema = z.object({
@@ -25,6 +26,9 @@ export const ServiceSchema = z.object({
   currentRevision: z.string().nullable().optional(),
   previousRevision: z.string().nullable().optional(),
   serviceUrl: z.string().url().nullable().optional(),
+  // Static hosting (S3 + CloudFront / Blob + CDN)
+  bucketName: z.string().nullable().optional(),
+  cdnDistributionId: z.string().nullable().optional(),
   createdAt: z.date().default(() => new Date()),
 });
 

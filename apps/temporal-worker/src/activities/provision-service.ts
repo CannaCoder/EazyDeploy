@@ -33,6 +33,7 @@ export async function provisionServiceActivity(
   const mappedSecretRefs = rawRefs.map((ref) => ({
     name: ref.name,
     reference: ref.reference || (ref as any).valueFrom || "",
+    value: (ref as any).value,
   }));
 
   const res = await adapter.provisionService({

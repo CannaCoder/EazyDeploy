@@ -8,6 +8,7 @@ export * from "./build-image.js";
 export * from "./push-secrets.js";
 export * from "./provision-service.js";
 export * from "./configure-ingress.js";
+export * from "./deploy-static-site.js";
 // Phase 4 — Observability & Rollback
 export * from "./stream-log.js";
 export * from "./verify-deployment.js";

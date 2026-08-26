@@ -30,6 +30,13 @@ import {
   AlertCircle,
   Sparkles,
   ArrowRight,
+  Eye,
+  EyeOff,
+  Plus,
+  Trash2,
+  FileText,
+  List,
+  KeyRound,
 } from "lucide-react";
 import { CloudProviderCard } from "@/components/cloud-connect/cloud-provider-card";
 import { AwsConnectWizard } from "@/components/cloud-connect/aws-connect-wizard";
@@ -62,8 +69,16 @@ function NewProjectContent() {
   const searchParams = useSearchParams();
   const installationIdParam = searchParams.get("installation_id");
 
-  const [step, setStep] = useState<1 | 2 | 3>(1);
+  const [step, setStep] = useState<1 | 2 | 3 | 4>(1);
   const [activeTab, setActiveTab] = useState<"direct" | "token" | "app">("direct");
+
+  // Environment variables state (Vercel style)
+  const [envMode, setEnvMode] = useState<"paste" | "form">("paste");
+  const [envRawText, setEnvRawText] = useState("");
+  const [envVarsList, setEnvVarsList] = useState<
+    Array<{ id: string; key: string; value: string; show: boolean }>
+  >([{ id: "1", key: "", value: "", show: false }]);
+  const [parsedEnvCount, setParsedEnvCount] = useState<number | null>(null);
 
   // Direct repo lookup state
   const [repoInput, setRepoInput] = useState("");
@@ -99,6 +114,86 @@ function NewProjectContent() {
 
   const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000";
 
+  const parseEnvText = (text: string) => {
+    const lines = text.split("\n");
+    const parsed: Array<{ id: string; key: string; value: string; show: boolean }> = [];
+    for (let i = 0; i < lines.length; i++) {
+      const rawLine = lines[i].trim();
+      if (!rawLine || rawLine.startsWith("#")) continue;
+      const eqIndex = rawLine.indexOf("=");
+      if (eqIndex === -1) continue;
+      const k = rawLine.substring(0, eqIndex).trim();
+      let v = rawLine.substring(eqIndex + 1).trim();
+      if ((v.startsWith('"') && v.endsWith('"')) || (v.startsWith("'") && v.endsWith("'"))) {
+        v = v.slice(1, -1);
+      }
+      if (k) {
+        parsed.push({
+          id: `${Date.now()}-${i}-${Math.random().toString(36).substring(2, 6)}`,
+          key: k,
+          value: v,
+          show: false,
+        });
+      }
+    }
+    return parsed;
+  };
+
+  const handleApplyRawEnv = () => {
+    const parsed = parseEnvText(envRawText);
+    if (parsed.length > 0) {
+      setEnvVarsList(parsed);
+      setParsedEnvCount(parsed.length);
+      setEnvMode("form");
+    }
+  };
+
+  const handleAddEnvRow = () => {
+    setEnvVarsList((prev) => [
+      ...prev,
+      {
+        id: `${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+        key: "",
+        value: "",
+        show: false,
+      },
+    ]);
+  };
+
+  const handleUpdateEnvRow = (id: string, field: "key" | "value", val: string) => {
+    setEnvVarsList((prev) =>
+      prev.map((item) => (item.id === id ? { ...item, [field]: val } : item))
+    );
+  };
+
+  const handleToggleShow = (id: string) => {
+    setEnvVarsList((prev) =>
+      prev.map((item) => (item.id === id ? { ...item, show: !item.show } : item))
+    );
+  };
+
+  const handleRemoveEnvRow = (id: string) => {
+    setEnvVarsList((prev) => prev.filter((item) => item.id !== id));
+  };
+
+  const getCleanEnvMap = (): Record<string, string> => {
+    const map: Record<string, string> = {};
+    if (envMode === "paste" && envRawText.trim()) {
+      const parsed = parseEnvText(envRawText);
+      for (const item of parsed) {
+        if (item.key.trim()) map[item.key.trim()] = item.value;
+      }
+      return map;
+    }
+    for (const item of envVarsList) {
+      const k = item.key.trim();
+      if (k) {
+        map[k] = item.value;
+      }
+    }
+    return map;
+  };
+
   const triggerDeploy = trpc.deployment.trigger.useMutation({
     onSuccess(deployData) {
       if (deployData?.projectId && deployData?.id) {
@@ -116,9 +211,11 @@ function NewProjectContent() {
 
   const createProject = trpc.project.create.useMutation({
     onSuccess(data) {
+      const envMap = getCleanEnvMap();
       triggerDeploy.mutate({
         projectId: data.id,
         branch: productionBranch || data.productionBranch || "main",
+        envVars: Object.keys(envMap).length > 0 ? envMap : undefined,
       });
     },
     onError(err) {
@@ -314,6 +411,8 @@ function NewProjectContent() {
       ? (azureConnectionId || searchParams.get("connectionId") || undefined)
       : undefined;
 
+    const envMap = getCleanEnvMap();
+
     createProject.mutate({
       name: projectName || selectedRepo.name,
       githubRepoOwner: selectedRepo.owner,
@@ -322,6 +421,7 @@ function NewProjectContent() {
       productionBranch: productionBranch || "main",
       cloudProvider: selectedProvider,
       cloudConnectionId: connId,
+      envVars: Object.keys(envMap).length > 0 ? envMap : undefined,
     });
   };
 
@@ -342,10 +442,11 @@ function NewProjectContent() {
       </div>
 
       {/* Step Progress Tracker */}
-      <div className="grid grid-cols-3 gap-2">
+      <div className="grid grid-cols-4 gap-2">
         <div className={`h-1.5 rounded-full transition-colors ${step >= 1 ? "bg-white" : "bg-zinc-800"}`} />
         <div className={`h-1.5 rounded-full transition-colors ${step >= 2 ? "bg-white" : "bg-zinc-800"}`} />
         <div className={`h-1.5 rounded-full transition-colors ${step >= 3 ? "bg-white" : "bg-zinc-800"}`} />
+        <div className={`h-1.5 rounded-full transition-colors ${step >= 4 ? "bg-white" : "bg-zinc-800"}`} />
       </div>
 
       {errorMsg && (
@@ -830,6 +931,239 @@ function NewProjectContent() {
               Back
             </Button>
             <Button
+              onClick={() => setStep(4)}
+              className="bg-white hover:bg-zinc-200 text-black font-semibold font-mono text-xs h-9 px-4 cursor-pointer flex items-center gap-1.5"
+            >
+              <span>Continue to Environment Variables</span>
+              <ArrowRight className="h-3.5 w-3.5" />
+            </Button>
+          </CardFooter>
+        </Card>
+      )}
+
+      {/* STEP 4: Environment Variables (Vercel Style) */}
+      {step === 4 && selectedRepo && (
+        <Card className="bg-[#09090b] border-white/10 shadow-2xl">
+          <CardHeader>
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+              <div className="flex items-center gap-3">
+                <div className="h-10 w-10 rounded-xl bg-zinc-900 border border-white/10 text-white flex items-center justify-center shrink-0">
+                  <KeyRound className="h-5 w-5 text-emerald-400" />
+                </div>
+                <div>
+                  <CardTitle className="text-lg text-white font-mono flex items-center gap-2">
+                    <span>Step 4: Environment Variables</span>
+                    <span className="text-[10px] font-normal px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                      Vercel Style
+                    </span>
+                  </CardTitle>
+                  <CardDescription className="text-zinc-400 text-xs mt-0.5">
+                    Add runtime configuration, database URLs, and secret keys injected into your deployed containers.
+                  </CardDescription>
+                </div>
+              </div>
+
+              {/* Mode toggle */}
+              <div className="flex gap-1 bg-zinc-900 p-1 rounded-lg border border-white/10 shrink-0 self-start sm:self-auto">
+                <button
+                  type="button"
+                  onClick={() => setEnvMode("paste")}
+                  className={`flex items-center gap-1.5 text-xs font-mono px-3 py-1 rounded-md transition-colors cursor-pointer ${
+                    envMode === "paste"
+                      ? "bg-white text-black font-semibold shadow"
+                      : "text-zinc-400 hover:text-white"
+                  }`}
+                >
+                  <FileText className="h-3.5 w-3.5" />
+                  <span>Paste .env</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setEnvMode("form")}
+                  className={`flex items-center gap-1.5 text-xs font-mono px-3 py-1 rounded-md transition-colors cursor-pointer ${
+                    envMode === "form"
+                      ? "bg-white text-black font-semibold shadow"
+                      : "text-zinc-400 hover:text-white"
+                  }`}
+                >
+                  <List className="h-3.5 w-3.5" />
+                  <span>Key-Value Form</span>
+                </button>
+              </div>
+            </div>
+          </CardHeader>
+
+          <CardContent className="space-y-5">
+            {/* TAB 1: PASTE RAW .ENV */}
+            {envMode === "paste" && (
+              <div className="space-y-3">
+                <div className="space-y-1.5">
+                  <div className="flex items-center justify-between text-xs font-mono">
+                    <span className="text-zinc-300 font-semibold">Paste raw .env content:</span>
+                    <span className="text-zinc-500 text-[11px]">Supports comments (#) and quotes</span>
+                  </div>
+                  <textarea
+                    rows={8}
+                    value={envRawText}
+                    onChange={(e) => setEnvRawText(e.target.value)}
+                    placeholder={`DATABASE_URL=postgresql://neondb_owner:password@ep-host.neon.tech/neondb?sslmode=require\nCLERK_SECRET_KEY=sk_test_...\nUPSTASH_REDIS_REST_URL=https://...\nAPI_KEY=your_secret_key`}
+                    className="w-full p-3 rounded-lg bg-zinc-900 border border-white/15 text-white font-mono text-xs focus:outline-none focus:border-white leading-relaxed placeholder:text-zinc-600 resize-y"
+                  />
+                </div>
+
+                <div className="flex items-center justify-between flex-wrap gap-2">
+                  <div className="text-[11px] font-mono text-zinc-400">
+                    {parseEnvText(envRawText).length > 0 ? (
+                      <span className="text-emerald-400 font-semibold">
+                        ✅ {parseEnvText(envRawText).length} variable(s) ready to inject
+                      </span>
+                    ) : (
+                      <span className="text-zinc-500">
+                        Paste your database connection string and secret keys here
+                      </span>
+                    )}
+                  </div>
+                  {envRawText.trim() && (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={handleApplyRawEnv}
+                      className="h-8 text-xs font-mono cursor-pointer border-white/20 hover:bg-zinc-800 text-zinc-200"
+                    >
+                      <span>Review in Key-Value Form ({parseEnvText(envRawText).length})</span>
+                    </Button>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* TAB 2: KEY-VALUE FORM */}
+            {envMode === "form" && (
+              <div className="space-y-3">
+                {/* Common variable chips */}
+                <div className="flex items-center gap-1.5 flex-wrap text-[11px] font-mono text-zinc-400 pb-1">
+                  <span className="text-zinc-500">Quick add:</span>
+                  {["DATABASE_URL", "CLERK_SECRET_KEY", "UPSTASH_REDIS_REST_URL", "JWT_SECRET", "NEXTAUTH_SECRET", "NODE_ENV"].map((chip) => (
+                    <button
+                      key={chip}
+                      type="button"
+                      onClick={() => {
+                        const exists = envVarsList.some((e) => e.key === chip);
+                        if (!exists) {
+                          setEnvVarsList((prev) => [
+                            ...prev.filter((p) => p.key.trim() !== "" || p.value.trim() !== ""),
+                            { id: `${Date.now()}-${chip}`, key: chip, value: "", show: false },
+                          ]);
+                        }
+                      }}
+                      className="px-2 py-0.5 rounded bg-zinc-900 hover:bg-zinc-800 border border-white/10 text-zinc-300 hover:text-white cursor-pointer transition-colors"
+                    >
+                      +{chip}
+                    </button>
+                  ))}
+                </div>
+
+                {/* Rows list */}
+                <div className="space-y-2 max-h-[300px] overflow-y-auto pr-1">
+                  {envVarsList.map((item) => (
+                    <div key={item.id} className="flex items-center gap-2">
+                      <input
+                        type="text"
+                        placeholder="KEY (e.g. DATABASE_URL)"
+                        value={item.key}
+                        onChange={(e) =>
+                          handleUpdateEnvRow(item.id, "key", e.target.value.toUpperCase().replace(/\s+/g, "_"))
+                        }
+                        className="w-2/5 h-9 px-3 rounded-lg bg-zinc-900 border border-white/15 text-white font-mono text-xs focus:outline-none focus:border-white uppercase placeholder:normal-case placeholder:text-zinc-600"
+                      />
+                      <div className="flex-1 relative flex items-center">
+                        <input
+                          type={item.show ? "text" : "password"}
+                          placeholder="VALUE (e.g. postgresql://...)"
+                          value={item.value}
+                          onChange={(e) => handleUpdateEnvRow(item.id, "value", e.target.value)}
+                          className="w-full h-9 pl-3 pr-8 rounded-lg bg-zinc-900 border border-white/15 text-white font-mono text-xs focus:outline-none focus:border-white placeholder:text-zinc-600"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => handleToggleShow(item.id)}
+                          className="absolute right-2.5 text-zinc-500 hover:text-zinc-300 cursor-pointer"
+                        >
+                          {item.show ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
+                        </button>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => handleRemoveEnvRow(item.id)}
+                        disabled={envVarsList.length === 1 && !item.key && !item.value}
+                        className="h-9 w-9 flex items-center justify-center rounded-lg bg-zinc-900 border border-white/10 text-zinc-500 hover:text-rose-400 hover:border-rose-500/30 transition-colors cursor-pointer shrink-0 disabled:opacity-30"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+
+                <div className="flex items-center justify-between pt-1">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={handleAddEnvRow}
+                    className="h-8 text-xs font-mono cursor-pointer border-white/15 hover:bg-zinc-800 text-zinc-200 flex items-center gap-1.5"
+                  >
+                    <Plus className="h-3.5 w-3.5" />
+                    <span>Add Variable</span>
+                  </Button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const text = envVarsList
+                        .filter((e) => e.key.trim())
+                        .map((e) => `${e.key}=${e.value}`)
+                        .join("\n");
+                      setEnvRawText(text);
+                      setEnvMode("paste");
+                    }}
+                    className="text-xs font-mono text-zinc-400 hover:text-white underline cursor-pointer"
+                  >
+                    Switch to Raw Paste
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Deployment Target Info Banner */}
+            <div className="p-3.5 rounded-xl bg-zinc-900/90 border border-white/10 text-xs font-mono space-y-2">
+              <div className="flex items-center justify-between text-zinc-400">
+                <span>Deploy Target:</span>
+                <span className="text-white font-semibold flex items-center gap-1.5">
+                  <span className="uppercase text-emerald-400">{selectedProvider}</span>
+                  <span>({selectedRepo.fullName})</span>
+                </span>
+              </div>
+              <div className="flex items-center justify-between text-zinc-400">
+                <span>Environment Variables Configured:</span>
+                <span className="text-white font-semibold">
+                  {Object.keys(getCleanEnvMap()).length} variable(s)
+                </span>
+              </div>
+              <div className="text-[11px] text-zinc-500 pt-1 border-t border-white/[0.06] flex items-center gap-1.5">
+                <ShieldCheck className="h-3.5 w-3.5 text-emerald-400 shrink-0" />
+                <span>
+                  Variables are AES-256 encrypted and injected into {selectedProvider === "azure" ? "Azure Container Apps & Key Vault" : "AWS Secrets Manager"}.
+                </span>
+              </div>
+            </div>
+          </CardContent>
+
+          <CardFooter className="flex items-center justify-between border-t border-white/[0.08] pt-4">
+            <Button variant="ghost" onClick={() => setStep(3)} className="font-mono text-xs cursor-pointer">
+              Back
+            </Button>
+            <Button
               onClick={handleFinish}
               disabled={createProject.isPending || triggerDeploy.isPending}
               className="bg-white hover:bg-zinc-200 text-black font-semibold font-mono text-xs h-9 px-5 cursor-pointer flex items-center gap-2"
@@ -837,7 +1171,12 @@ function NewProjectContent() {
               {createProject.isPending || triggerDeploy.isPending ? (
                 <>
                   <Spinner size="sm" />
-                  <span>Deploying...</span>
+                  <span>Deploying & Provisioning...</span>
+                </>
+              ) : Object.keys(getCleanEnvMap()).length > 0 ? (
+                <>
+                  <Sparkles className="h-3.5 w-3.5 text-black" />
+                  <span>Deploy ({Object.keys(getCleanEnvMap()).length} Env Vars)</span>
                 </>
               ) : (
                 "Complete & Deploy"

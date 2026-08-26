@@ -67,7 +67,7 @@ describe("ProjectSchema", () => {
     expect(parsed.success).toBe(true);
   });
 
-  it("rejects non-positive githubInstallationId", () => {
+  it("rejects negative githubInstallationId but allows 0 for public repos", () => {
     const invalid = {
       id: "550e8400-e29b-41d4-a716-446655440001",
       ownerId: "550e8400-e29b-41d4-a716-446655440000",
@@ -76,14 +76,25 @@ describe("ProjectSchema", () => {
       githubRepoName: "repo",
       githubInstallationId: -1,
     };
-    const parsed = ProjectSchema.safeParse(invalid);
-    expect(parsed.success).toBe(false);
+    const parsedInvalid = ProjectSchema.safeParse(invalid);
+    expect(parsedInvalid.success).toBe(false);
+
+    const validPublic = {
+      id: "550e8400-e29b-41d4-a716-446655440001",
+      ownerId: "550e8400-e29b-41d4-a716-446655440000",
+      name: "Acme Public",
+      githubRepoOwner: "acme",
+      githubRepoName: "repo",
+      githubInstallationId: 0,
+    };
+    const parsedPublic = ProjectSchema.safeParse(validPublic);
+    expect(parsedPublic.success).toBe(true);
   });
 });
 
 describe("ServiceSchema", () => {
   it("validates supported service types", () => {
-    const types = ["nextjs", "vite", "node", "fastapi", "docker"] as const;
+    const types = ["nextjs", "vite", "node", "fastapi", "docker", "static"] as const;
     types.forEach((type) => {
       const valid = {
         id: "550e8400-e29b-41d4-a716-446655440002",
