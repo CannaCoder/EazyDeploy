@@ -128,7 +128,8 @@ export interface StreamLogActivityResult {
 
 export interface VerifyServiceTarget {
   serviceName: string;
-  /** ALB DNS / Azure Container App HTTPS URL from configureIngressActivity */
+  serviceType?: string;
+  /** ALB DNS / Azure Container App HTTPS URL / CDN or Static Web URL */
   serviceUrl: string;
   cloudProvider: CloudProvider;
   /** ECS service ARN or Azure Container App name */

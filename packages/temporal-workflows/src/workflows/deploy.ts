@@ -500,6 +500,7 @@ export async function deployWorkflow(
     const prov = provisionedServices.find((p) => p.serviceName === s.name);
     return {
       serviceName: s.name,
+      serviceType: s.type,
       serviceUrl: deployedUrls[s.name] || "",
       cloudProvider: provider,
       cloudServiceId: prov?.ecsServiceArn || prov?.cloudServiceId,
@@ -507,14 +508,18 @@ export async function deployWorkflow(
     };
   });
 
+  const isStaticOnly =
+    manifest.services.length > 0 &&
+    manifest.services.every((s) => s.type === "static");
+
   let verifyResult;
   try {
     verifyResult = await verifyDeploymentActivity({
       deploymentId: input.deploymentId,
       services: verifyTargets,
-      gracePeriodSeconds: provider === "azure" ? 120 : 40,
-      pollIntervalSeconds: 10,
-      timeoutSeconds: 300,
+      gracePeriodSeconds: isStaticOnly ? 5 : provider === "azure" ? 45 : 30,
+      pollIntervalSeconds: isStaticOnly ? 5 : 10,
+      timeoutSeconds: isStaticOnly ? 90 : 120,
     });
   } catch (err: unknown) {
     verifyResult = { success: false, reason: (err as Error).message };

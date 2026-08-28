@@ -27,6 +27,7 @@
     "@azure/arm-resources": "^8.0.0",
     "@azure/identity": "^4.13.2",
     "@azure/keyvault-secrets": "^4.11.2",
+    "@azure/storage-blob": "^12.33.0",
     "@shipora/types": "workspace:*"
   },
   "devDependencies": {

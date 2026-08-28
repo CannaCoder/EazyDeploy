@@ -92,13 +92,16 @@ export async function verifyDeploymentActivity(
   }
 
   const isAzureTarget = input.services.some((s) => s.cloudProvider === "azure");
-  await streamLogActivity({
-    deploymentId,
-    serviceName: "system",
-    logLine: `[verify] Waiting ${input.gracePeriodSeconds ?? DEFAULT_GRACE_PERIOD_S}s for ${isAzureTarget ? "Container App revision routing" : "ALB target registration"}...`,
-    level: "info",
-  });
-  await sleep(gracePeriod);
+  if (gracePeriod > 0) {
+    const graceLabel = gracePeriod <= 10000 ? "live routing propagation" : (isAzureTarget ? "Container App revision routing" : "ALB target registration");
+    await streamLogActivity({
+      deploymentId,
+      serviceName: "system",
+      logLine: `[verify] Waiting ${Math.round(gracePeriod / 1000)}s for ${graceLabel}...`,
+      level: "info",
+    });
+    await sleep(gracePeriod);
+  }
 
   const startTime = Date.now();
   let attempt = 0;
@@ -124,7 +127,7 @@ export async function verifyDeploymentActivity(
     await streamLogActivity({
       deploymentId,
       serviceName: failed.serviceName,
-      logLine: `[verify] ⚠️ Poll ${attempt}: ${failed.reason} — retrying in ${DEFAULT_POLL_INTERVAL_S}s...`,
+      logLine: `[verify] ⚠️ Poll ${attempt}: ${failed.reason} — retrying in ${Math.round(pollInterval / 1000)}s...`,
       level: "warn",
     });
     await sleep(pollInterval);
@@ -155,51 +158,65 @@ async function checkService(
 ): Promise<CheckResult> {
   const { serviceName, serviceUrl, cloudProvider } = svc;
 
-  // 1. HTTP health check against the ALB / Container App URL (/health and fallback to /)
+  if (!serviceUrl) {
+    return { ok: false, serviceName, reason: "Service URL is missing" };
+  }
+
+  const isStatic =
+    svc.serviceType === "static" ||
+    serviceUrl.includes("web.core.windows.net") ||
+    serviceUrl.includes("cloudfront.net") ||
+    serviceUrl.includes("/preview/");
+
+  // 1. HTTP health check against the endpoint
+  // For static sites, probe root path (/) directly since /health is usually not an asset
   const healthUrl = serviceUrl.replace(/\/$/, "") + "/health";
   const rootUrl = serviceUrl.replace(/\/$/, "") + "/";
+  const primaryUrl = isStatic ? rootUrl : healthUrl;
+  const fallbackUrl = isStatic ? healthUrl : rootUrl;
+
   let httpOk = false;
   let lastReason = "";
 
   try {
-    const res = await fetch(healthUrl, {
+    const res = await fetch(primaryUrl, {
       method: "GET",
       signal: AbortSignal.timeout(8000),
     });
-    if (res.ok) {
+    if (res.ok || (isStatic && res.status >= 200 && res.status < 400)) {
       httpOk = true;
     } else if (res.status === 404 || res.status === 405) {
-      // Endpoint /health not present — probe root path /
+      // Endpoint not present — probe fallback URL
       try {
-        const rootRes = await fetch(rootUrl, {
+        const fallbackRes = await fetch(fallbackUrl, {
           method: "GET",
           signal: AbortSignal.timeout(8000),
         });
-        if (rootRes.ok || (rootRes.status >= 200 && rootRes.status < 500)) {
+        if (fallbackRes.ok || (fallbackRes.status >= 200 && fallbackRes.status < 500)) {
           httpOk = true;
         } else {
-          lastReason = `HTTP ${rootRes.status} from ${rootUrl}`;
+          lastReason = `HTTP ${fallbackRes.status} from ${fallbackUrl}`;
         }
-      } catch {
-        lastReason = `HTTP ${res.status} from ${healthUrl}`;
+      } catch (fbErr) {
+        lastReason = `HTTP ${res.status} from ${primaryUrl} (${(fbErr as Error).message})`;
       }
     } else {
-      lastReason = `HTTP ${res.status} from ${healthUrl}`;
+      lastReason = `HTTP ${res.status} from ${primaryUrl}`;
     }
   } catch (err) {
-    // Timeout or network error on /health — probe root / once as fallback
+    // Network error on primary — attempt fallback once
     try {
-      const rootRes = await fetch(rootUrl, {
+      const fallbackRes = await fetch(fallbackUrl, {
         method: "GET",
         signal: AbortSignal.timeout(8000),
       });
-      if (rootRes.ok || (rootRes.status >= 200 && rootRes.status < 500)) {
+      if (fallbackRes.ok || (fallbackRes.status >= 200 && fallbackRes.status < 500)) {
         httpOk = true;
       } else {
-        lastReason = `Connection error to ${healthUrl}: ${(err as Error).message}`;
+        lastReason = `Connection error to ${primaryUrl}: ${(err as Error).message}`;
       }
     } catch {
-      lastReason = `Connection error to ${healthUrl}: ${(err as Error).message}`;
+      lastReason = `Connection error to ${primaryUrl}: ${(err as Error).message}`;
     }
   }
 
@@ -207,8 +224,8 @@ async function checkService(
     return { ok: false, serviceName, reason: lastReason };
   }
 
-  // 2. Cloud-provider stability check
-  if (cloudProvider === "aws") {
+  // 2. Cloud-provider stability check (only for container workloads)
+  if (cloudProvider === "aws" && !isStatic) {
     return checkECSStability(svc, attempt);
   }
   // Azure: HTTP health pass is sufficient — revision stability is inferred from traffic weight
