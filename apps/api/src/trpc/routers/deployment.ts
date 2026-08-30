@@ -6,6 +6,7 @@ import { deployments, projects, services, users } from "@shipora/db";
 import { eq, desc } from "drizzle-orm";
 import {
   startDeployWorkflow,
+  startRollbackWorkflow,
   getDeployWorkflowProgress,
 } from "../../plugins/temporal.js";
 import { localProjectStore } from "./project.js";
@@ -178,6 +179,38 @@ export const deploymentRouter = router({
         liveProgress = await getDeployWorkflowProgress(
           deployment.temporalWorkflowId
         );
+      }
+
+      // Sync completed / failed status from Temporal progress to deployment record
+      if (liveProgress) {
+        if (liveProgress.stage === "completed" && deployment.status !== "success") {
+          deployment.status = "success";
+          deployment.completedAt = deployment.completedAt || new Date();
+          deployment.deployedUrls = liveProgress.deployedUrls || deployment.deployedUrls;
+          deployment.previousRevisionRefs = liveProgress.previousRevisionRefs || deployment.previousRevisionRefs;
+
+          try {
+            await ctx.db
+              .update(deployments)
+              .set({
+                status: "success",
+                completedAt: new Date(),
+                deployedUrls: liveProgress.deployedUrls,
+                previousRevisionRefs: liveProgress.previousRevisionRefs,
+              })
+              .where(eq(deployments.id, deployment.id));
+          } catch {
+            // non-fatal
+          }
+        } else if (liveProgress.stage === "failed" && deployment.status === "building") {
+          deployment.status = "failed";
+        } else if (liveProgress.stage === "rolling_back" && deployment.status === "building") {
+          deployment.status = "rolling_back";
+        }
+
+        if (liveProgress.services && liveProgress.services.length > 0) {
+          projectServices = liveProgress.services;
+        }
       }
 
       return {
@@ -369,14 +402,17 @@ export const deploymentRouter = router({
       const commitSha = prevDeployment?.commitSha || "a1b2c3d";
 
       const newDeploymentId = randomUUID();
-      const rollbackDeployment = {
+      const rollbackDeployment: any = {
         id: newDeploymentId,
         projectId,
         commitSha: `${commitSha.slice(0, 7)}-rb`,
         branch,
-        status: "building",
+        status: "rolling_back",
+        rolledBackTo: input.deploymentId,
+        rollbackReason: "manual",
         startedAt: new Date(),
         createdAt: new Date(),
+        temporalWorkflowId: null,
       };
 
       localDeploymentStore.set(newDeploymentId, rollbackDeployment);
@@ -388,7 +424,9 @@ export const deploymentRouter = router({
             projectId,
             commitSha: `${commitSha.slice(0, 7)}-rb`,
             branch,
-            status: "building",
+            status: "rolling_back",
+            rolledBackTo: input.deploymentId,
+            rollbackReason: "manual",
             startedAt: new Date(),
           });
         }
@@ -396,9 +434,52 @@ export const deploymentRouter = router({
         // ignore
       }
 
+      // Parse previous revision refs
+      const previousRefs = (prevDeployment?.previousRevisionRefs || {}) as Record<
+        string,
+        { aws?: string; azure?: string; distributionId?: string; bucketName?: string }
+      >;
+
+      const services = Object.entries(previousRefs).map(([serviceName, refs]) => ({
+        serviceName,
+        cloudProvider: ("aws" in refs && refs.aws ? "aws" : "azure") as "aws" | "azure",
+        previousTaskDefinitionArn: refs.aws,
+        previousRevisionName: refs.azure,
+        distributionId: refs.distributionId,
+        bucketName: refs.bucketName,
+      }));
+
+      // Trigger Temporal rollback workflow
+      let workflowId: string | null = null;
+      try {
+        const wf = await startRollbackWorkflow({
+          deploymentId: newDeploymentId,
+          projectId,
+          reason: "manual",
+          services,
+        });
+        workflowId = wf?.workflowId || null;
+      } catch (err) {
+        console.warn("[rollback] Failed to start rollback workflow:", (err as Error).message);
+      }
+
+      if (workflowId) {
+        rollbackDeployment.temporalWorkflowId = workflowId as any;
+        localDeploymentStore.set(newDeploymentId, rollbackDeployment);
+        try {
+          await ctx.db
+            .update(deployments)
+            .set({ temporalWorkflowId: workflowId })
+            .where(eq(deployments.id, newDeploymentId));
+        } catch {
+          // ignore
+        }
+      }
+
       return {
         success: true,
         rollbackDeploymentId: newDeploymentId,
+        temporalWorkflowId: workflowId,
       };
     }),
 });

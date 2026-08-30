@@ -13,6 +13,7 @@ export * from "./deploy-static-site.js";
 export * from "./stream-log.js";
 export * from "./verify-deployment.js";
 export * from "./rollback.js";
+export * from "./finalize-deployment.js";
 // Legacy aliases
 export * from "./build-container.js";
 export * from "./sync-secrets.js";

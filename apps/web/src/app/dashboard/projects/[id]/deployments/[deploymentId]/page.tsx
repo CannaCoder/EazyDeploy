@@ -65,6 +65,21 @@ export default function DeploymentDetailsPage() {
     },
   });
 
+  const triggerDeployMutation = trpc.deployment.trigger.useMutation({
+    onSuccess: (data) => {
+      if (data?.id) {
+        router.push(`/dashboard/projects/${projectId}/deployments/${data.id}`);
+      }
+    },
+  });
+
+  const handleDeployLatest = () => {
+    triggerDeployMutation.mutate({
+      projectId,
+      branch: deployment?.branch || "main",
+    });
+  };
+
   if (isLoading) {
     return (
       <div className="flex items-center justify-center py-20">
@@ -129,6 +144,18 @@ export default function DeploymentDetailsPage() {
           },
         ]);
 
+  const isStaticOnly =
+    servicesList.length > 0 && servicesList.every((s: any) => s.type === "static");
+
+  const effectiveStatus =
+    liveProgress?.stage === "completed"
+      ? "success"
+      : liveProgress?.stage === "failed"
+      ? "failed"
+      : liveProgress?.stage === "rolling_back"
+      ? "rolled_back"
+      : deployment.status;
+
   return (
     <div className="space-y-8 max-w-5xl mx-auto">
       {/* Navigation Breadcrumbs */}
@@ -174,7 +201,7 @@ export default function DeploymentDetailsPage() {
             <h1 className="text-2xl sm:text-3xl font-bold text-white font-mono">
               Deploy #{deployment.commitSha.slice(0, 7)}
             </h1>
-            <DeployStatusBadge status={deployment.status} />
+            <DeployStatusBadge status={effectiveStatus} isStatic={isStaticOnly} />
           </div>
           <p className="text-sm text-muted-foreground flex items-center gap-2">
             <GitBranch className="h-4 w-4 text-violet-400" />
@@ -184,9 +211,9 @@ export default function DeploymentDetailsPage() {
           </p>
         </div>
 
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-3">
           {/* Rollback button */}
-          {(deployment.status === "success" || deployment.status === "rolled_back") &&
+          {(effectiveStatus === "success" || effectiveStatus === "rolled_back") &&
             !!(deployment as { previousRevisionRefs?: unknown }).previousRevisionRefs &&
             rollbackMutation && (
               <Button
@@ -199,12 +226,32 @@ export default function DeploymentDetailsPage() {
                 Rollback to this version
               </Button>
             )}
-          <Button variant="outline" onClick={() => refetch()} className="gap-2">
+
+          {/* Trigger Deploy Latest button */}
+          <Button
+            onClick={handleDeployLatest}
+            disabled={triggerDeployMutation.isPending}
+            className="bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-500 hover:to-indigo-500 text-white gap-2 shadow-md shadow-violet-500/20 text-xs font-mono"
+          >
+            {triggerDeployMutation.isPending ? (
+              <>
+                <Spinner size="sm" />
+                <span>Deploying...</span>
+              </>
+            ) : (
+              <>
+                <Rocket className="h-3.5 w-3.5" />
+                <span>Deploy Latest</span>
+              </>
+            )}
+          </Button>
+
+          <Button variant="outline" onClick={() => refetch()} className="gap-2 text-xs">
             <RotateCcw className="h-4 w-4" />
             Refresh
           </Button>
           <Link href={`/dashboard/projects/${projectId}/deployments`}>
-            <Button variant="outline" className="gap-2">
+            <Button variant="outline" className="gap-2 text-xs">
               <ArrowLeft className="h-4 w-4" />
               All Deployments
             </Button>
@@ -222,9 +269,13 @@ export default function DeploymentDetailsPage() {
                 <span>Deploy Engine Pipeline</span>
               </CardTitle>
               <CardDescription>
-                {isAzure
-                  ? "Azure ACR container build & Container Apps deployment orchestration."
-                  : "AWS CodeBuild Docker container build & ECS Fargate deployment orchestration."}
+                {isStaticOnly
+                  ? (isAzure
+                      ? "Azure Storage static website & CDN distribution orchestration."
+                      : "AWS S3 static site & CloudFront CDN distribution orchestration.")
+                  : (isAzure
+                      ? "Azure ACR container build & Container Apps deployment orchestration."
+                      : "AWS CodeBuild Docker container build & ECS Fargate deployment orchestration.")}
               </CardDescription>
             </div>
             {deployment.temporalWorkflowId && (

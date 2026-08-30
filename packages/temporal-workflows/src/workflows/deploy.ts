@@ -110,6 +110,7 @@ const {
   streamLogActivity,
   verifyDeploymentActivity,
   rollbackActivity,
+  finalizeDeploymentActivity,
 } = proxyActivities<DeployActivities>({
   startToCloseTimeout: "7 minutes",
   retry: {
@@ -614,6 +615,19 @@ export async function deployWorkflow(
       serviceUrl: deployedUrls[s.name],
     })),
   };
+
+  try {
+    await finalizeDeploymentActivity({
+      deploymentId: input.deploymentId,
+      projectId: input.projectId,
+      status: "success",
+      deployedUrls,
+      previousRevisionRefs,
+      summary: successSummary,
+    });
+  } catch {
+    // Non-fatal
+  }
 
   try {
     await reportGitHubStatusActivity({

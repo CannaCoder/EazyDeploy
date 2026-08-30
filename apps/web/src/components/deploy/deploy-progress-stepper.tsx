@@ -45,9 +45,56 @@ export interface DeployProgressProps {
   error?: string;
 }
 
-function getStagesForProvider(provider?: string) {
+function getStagesForProvider(provider?: string, isStaticOnly?: boolean) {
   const p = (provider || "aws").toLowerCase();
   const isAzure = p === "azure";
+
+  if (isStaticOnly) {
+    return [
+      {
+        key: "analyzing",
+        label: "Service Discovery",
+        description: "Detect static monorepo services & assets",
+        icon: Layers,
+      },
+      {
+        key: "building",
+        label: "Static Packaging",
+        description: "Package static assets & directory tree",
+        icon: Box,
+      },
+      {
+        key: "syncing_secrets",
+        label: isAzure ? "Storage Account Sync" : "S3 Bucket Configuration",
+        description: isAzure
+          ? "Provision Azure Storage Account & $web container"
+          : "Configure S3 bucket policy & CORS",
+        icon: KeyRound,
+      },
+      {
+        key: "provisioning",
+        label: isAzure ? "Azure Static Website" : "CloudFront CDN Setup",
+        description: isAzure
+          ? "Deploy static assets to Azure Blob $web"
+          : "Deploy assets to S3 origin bucket",
+        icon: Server,
+      },
+      {
+        key: "routing",
+        label: isAzure ? "Web Endpoint Routing" : "CDN Invalidation & DNS",
+        description: isAzure
+          ? "Configure Azure web.core.windows.net endpoint"
+          : "Invalidate CloudFront edge distribution cache",
+        icon: Network,
+      },
+      {
+        key: "completed",
+        label: "Live & Deployed",
+        description: "All services online and healthy",
+        icon: Rocket,
+      },
+    ];
+  }
 
   return [
     {
@@ -132,7 +179,9 @@ export function DeployProgressStepper({
 }: DeployProgressProps) {
   const isFailed = stage === "failed";
   const isCompleted = stage === "completed";
-  const stages = getStagesForProvider(provider);
+  const isStaticOnly =
+    services && services.length > 0 && services.every((s: any) => s.type === "static");
+  const stages = getStagesForProvider(provider, isStaticOnly);
   const currentIndex = getStageIndex(stage);
   const calculatedPercent =
     percent ?? (isCompleted ? 100 : isFailed ? 100 : Math.max(10, currentIndex * 20));

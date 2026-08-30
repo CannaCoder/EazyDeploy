@@ -4,8 +4,10 @@ import { CheckCircle2, XCircle, Clock, RotateCcw, AlertTriangle, Activity } from
 
 export function DeployStatusBadge({
   status,
+  isStatic,
 }: {
   status: "pending" | "building" | "deploying" | "verifying" | "rolling_back" | "success" | "failed" | "rolled_back" | string;
+  isStatic?: boolean;
 }) {
   if (status === "success") {
     return (
@@ -38,7 +40,7 @@ export function DeployStatusBadge({
     return (
       <Badge variant="warning" className="gap-1.5 py-1 px-2.5 bg-indigo-500/10 text-indigo-400 border-indigo-500/20">
         <Spinner size="sm" />
-        <span>Building Containers</span>
+        <span>{isStatic ? "Packaging Assets" : "Building Containers"}</span>
       </Badge>
     );
   }

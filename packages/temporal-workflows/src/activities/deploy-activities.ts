@@ -211,6 +211,20 @@ export interface RollbackActivityResult {
   error?: string;
 }
 
+export interface FinalizeDeploymentActivityInput {
+  deploymentId: string;
+  projectId: string;
+  status: "success" | "failed";
+  deployedUrls?: Record<string, string>;
+  previousRevisionRefs?: Record<string, unknown>;
+  summary?: string;
+}
+
+export interface FinalizeDeploymentActivityResult {
+  success: boolean;
+  error?: string;
+}
+
 // Backward-compatible type aliases
 export type BuildContainerInput = BuildImageActivityInput;
 export type BuildContainerResult = BuildImageActivityResult;
@@ -233,6 +247,7 @@ export interface DeployActivities {
   streamLogActivity(input: StreamLogActivityInput): Promise<StreamLogActivityResult>;
   verifyDeploymentActivity(input: VerifyDeploymentActivityInput): Promise<VerifyDeploymentActivityResult>;
   rollbackActivity(input: RollbackActivityInput): Promise<RollbackActivityResult>;
+  finalizeDeploymentActivity(input: FinalizeDeploymentActivityInput): Promise<FinalizeDeploymentActivityResult>;
 
   // Legacy aliases
   buildContainerActivity(input: BuildContainerInput): Promise<BuildContainerResult>;
