@@ -41,6 +41,8 @@ import {
 import { CloudProviderCard } from "@/components/cloud-connect/cloud-provider-card";
 import { AwsConnectWizard } from "@/components/cloud-connect/aws-connect-wizard";
 import { AzureConnectWizard } from "@/components/cloud-connect/azure-connect-wizard";
+import { DigitalOceanConnectWizard } from "@/components/cloud-connect/digitalocean-connect-wizard";
+import { GcpConnectWizard } from "@/components/cloud-connect/gcp-connect-wizard";
 import type { CloudProvider } from "@shipora/types";
 
 interface RepoItem {
@@ -56,6 +58,8 @@ interface RepoItem {
   isPrivate?: boolean;
   language?: string;
   htmlUrl?: string;
+  isStatic?: boolean;
+  detectedType?: string;
 }
 
 interface GitHubUser {
@@ -106,11 +110,21 @@ function NewProjectContent() {
   const [projectName, setProjectName] = useState("");
   const [productionBranch, setProductionBranch] = useState("main");
   const [errorMsg, setErrorMsg] = useState("");
-  const [connectedProviders, setConnectedProviders] = useState<{ aws: boolean; azure: boolean }>({
-    aws: true,
+  const [connectedProviders, setConnectedProviders] = useState<{
+    aws: boolean;
+    azure: boolean;
+    digitalocean: boolean;
+    gcp: boolean;
+  }>({
+    aws: false,
     azure: true,
+    digitalocean: false,
+    gcp: false,
   });
   const [azureConnectionId, setAzureConnectionId] = useState<string | null>(null);
+  const [awsConnectionId, setAwsConnectionId] = useState<string | null>(null);
+  const [doConnectionId, setDoConnectionId] = useState<string | null>(null);
+  const [gcpConnectionId, setGcpConnectionId] = useState<string | null>(null);
 
   const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000";
 
@@ -243,6 +257,46 @@ function NewProjectContent() {
     setWizardModal("azure");
   };
 
+  const handleConnectDigitalOcean = async () => {
+    try {
+      if (selectedRepo && typeof window !== "undefined") {
+        sessionStorage.setItem("new_project_selected_repo", JSON.stringify(selectedRepo));
+      }
+      const targetReturn = typeof window !== "undefined" ? window.location.pathname : "/dashboard/new-project";
+      const res = await fetch(`${apiUrl}/auth/digitalocean/start?returnTo=${encodeURIComponent(targetReturn)}`);
+      if (res.ok) {
+        const data = await res.json();
+        if (data.authUrl) {
+          window.location.href = data.authUrl;
+          return;
+        }
+      }
+    } catch {
+      // fallback
+    }
+    setWizardModal("digitalocean");
+  };
+
+  const handleConnectGcp = async () => {
+    try {
+      if (selectedRepo && typeof window !== "undefined") {
+        sessionStorage.setItem("new_project_selected_repo", JSON.stringify(selectedRepo));
+      }
+      const targetReturn = typeof window !== "undefined" ? window.location.pathname : "/dashboard/new-project";
+      const res = await fetch(`${apiUrl}/auth/gcp/start?returnTo=${encodeURIComponent(targetReturn)}`);
+      if (res.ok) {
+        const data = await res.json();
+        if (data.authUrl) {
+          window.location.href = data.authUrl;
+          return;
+        }
+      }
+    } catch {
+      // fallback
+    }
+    setWizardModal("gcp");
+  };
+
   // Load connected cloud providers on mount
   useEffect(() => {
     fetch(`${apiUrl}/cloud-connect/connections`)
@@ -251,15 +305,37 @@ function NewProjectContent() {
         if (data?.connections) {
           const hasAws = data.connections.some((c: any) => c.provider === "aws");
           const hasAzure = data.connections.some((c: any) => c.provider === "azure");
+          const hasDo = data.connections.some((c: any) => c.provider === "digitalocean");
+          const hasGcp = data.connections.some((c: any) => c.provider === "gcp");
           const azureConn = data.connections.find((c: any) => c.provider === "azure");
+          const awsConn = data.connections.find((c: any) => c.provider === "aws");
+          const doConn = data.connections.find((c: any) => c.provider === "digitalocean");
+          const gcpConn = data.connections.find((c: any) => c.provider === "gcp");
           if (azureConn?.id) {
             setAzureConnectionId(azureConn.id);
           }
+          if (awsConn?.id) {
+            setAwsConnectionId(awsConn.id);
+          }
+          if (doConn?.id) {
+            setDoConnectionId(doConn.id);
+          }
+          if (gcpConn?.id) {
+            setGcpConnectionId(gcpConn.id);
+          }
           setConnectedProviders({
-            aws: hasAws || true,
-            azure: hasAzure !== undefined ? hasAzure : true,
+            aws: !!hasAws,
+            azure: !!hasAzure,
+            digitalocean: !!hasDo,
+            gcp: !!hasGcp,
           });
-          if (hasAzure) {
+          if (hasAws && !hasAzure && !hasDo && !hasGcp) {
+            setSelectedProvider("aws");
+          } else if (hasDo && !hasAzure && !hasAws && !hasGcp) {
+            setSelectedProvider("digitalocean");
+          } else if (hasGcp && !hasAzure && !hasAws && !hasDo) {
+            setSelectedProvider("gcp");
+          } else if (hasAzure) {
             setSelectedProvider("azure");
           }
         }
@@ -274,12 +350,15 @@ function NewProjectContent() {
     const connId = searchParams.get("connectionId");
 
     if (connId) {
-      setAzureConnectionId(connId);
+      if (provider === "azure") setAzureConnectionId(connId);
+      if (provider === "digitalocean") setDoConnectionId(connId);
+      if (provider === "gcp") setGcpConnectionId(connId);
     }
 
-    if (status === "connected" && provider === "azure") {
-      setConnectedProviders((prev) => ({ ...prev, azure: true }));
-      setSelectedProvider("azure");
+    if (status === "connected" && (provider === "azure" || provider === "digitalocean" || provider === "gcp")) {
+      const p = provider as "azure" | "digitalocean" | "gcp";
+      setConnectedProviders((prev) => ({ ...prev, [p]: true }));
+      setSelectedProvider(p);
 
       // Automatically restore repo and jump directly to Step 2
       if (typeof window !== "undefined") {
@@ -401,6 +480,37 @@ function NewProjectContent() {
     if (typeof window !== "undefined") {
       sessionStorage.setItem("new_project_selected_repo", JSON.stringify(repo));
     }
+
+    // If static status hasn't been verified yet (e.g. from token repo list), detect it in background
+    if (repo.isStatic === undefined && repo.fullName) {
+      fetch(`${apiUrl}/github/verify-repo`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          repo: repo.fullName,
+          token: personalToken.trim() || undefined,
+        }),
+      })
+        .then((res) => (res.ok ? res.json() : null))
+        .then((data) => {
+          if (data?.repository) {
+            setSelectedRepo((prev) => {
+              if (!prev || prev.fullName !== repo.fullName) return prev;
+              const updated = {
+                ...prev,
+                isStatic: data.repository.isStatic,
+                detectedType: data.repository.detectedType,
+              };
+              if (typeof window !== "undefined") {
+                sessionStorage.setItem("new_project_selected_repo", JSON.stringify(updated));
+              }
+              return updated;
+            });
+          }
+        })
+        .catch(() => {});
+    }
+
     setStep(2);
   };
 
@@ -409,7 +519,11 @@ function NewProjectContent() {
     setErrorMsg("");
     const connId = selectedProvider === "azure"
       ? (azureConnectionId || searchParams.get("connectionId") || undefined)
-      : undefined;
+      : selectedProvider === "digitalocean"
+      ? (doConnectionId || searchParams.get("connectionId") || undefined)
+      : selectedProvider === "gcp"
+      ? (gcpConnectionId || searchParams.get("connectionId") || undefined)
+      : (awsConnectionId || undefined);
 
     const envMap = getCleanEnvMap();
 
@@ -807,11 +921,11 @@ function NewProjectContent() {
             </div>
           </CardHeader>
           <CardContent className="space-y-4">
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
               <CloudProviderCard
                 provider="aws"
                 title="Amazon Web Services"
-                description="ECS Fargate • ECR • Secrets Manager"
+                description="ECS Fargate • ECR • Secrets"
                 badge="Supported"
                 isConnected={connectedProviders.aws}
                 isSelected={selectedProvider === "aws"}
@@ -829,6 +943,28 @@ function NewProjectContent() {
                 onSelect={(p) => setSelectedProvider(p)}
                 onConnect={!connectedProviders.azure ? handleConnectAzure : undefined}
               />
+
+              <CloudProviderCard
+                provider="digitalocean"
+                title="DigitalOcean"
+                description="App Platform • DOCR • Spaces"
+                badge="1-Click OAuth"
+                isConnected={connectedProviders.digitalocean}
+                isSelected={selectedProvider === "digitalocean"}
+                onSelect={(p) => setSelectedProvider(p)}
+                onConnect={!connectedProviders.digitalocean ? handleConnectDigitalOcean : undefined}
+              />
+
+              <CloudProviderCard
+                provider="gcp"
+                title="Google Cloud"
+                description="Cloud Run • Artifact Reg • Secrets"
+                badge="1-Click OAuth"
+                isConnected={connectedProviders.gcp}
+                isSelected={selectedProvider === "gcp"}
+                onSelect={(p) => setSelectedProvider(p)}
+                onConnect={!connectedProviders.gcp ? handleConnectGcp : undefined}
+              />
             </div>
 
             {/* Active Account Status Banner */}
@@ -843,6 +979,20 @@ function NewProjectContent() {
               <div className="p-3 rounded-lg bg-emerald-950/20 border border-emerald-500/30 text-xs font-mono text-emerald-300 flex items-center gap-2">
                 <CheckCircle2 className="h-4 w-4 text-emerald-400 shrink-0" />
                 <span>Targeting connected account: <strong className="text-white">Azure Subscription (1-Click SSO)</strong></span>
+              </div>
+            )}
+
+            {selectedProvider === "digitalocean" && connectedProviders.digitalocean && (
+              <div className="p-3 rounded-lg bg-emerald-950/20 border border-emerald-500/30 text-xs font-mono text-emerald-300 flex items-center gap-2">
+                <CheckCircle2 className="h-4 w-4 text-emerald-400 shrink-0" />
+                <span>Targeting connected account: <strong className="text-white">DigitalOcean App Platform (1-Click OAuth)</strong></span>
+              </div>
+            )}
+
+            {selectedProvider === "gcp" && connectedProviders.gcp && (
+              <div className="p-3 rounded-lg bg-emerald-950/20 border border-emerald-500/30 text-xs font-mono text-emerald-300 flex items-center gap-2">
+                <CheckCircle2 className="h-4 w-4 text-emerald-400 shrink-0" />
+                <span>Targeting connected account: <strong className="text-white">Google Cloud Run (1-Click OAuth)</strong></span>
               </div>
             )}
           </CardContent>
@@ -924,19 +1074,79 @@ function NewProjectContent() {
                 <span className="text-zinc-500">Branch:</span>
                 <span className="text-zinc-200">{productionBranch}</span>
               </div>
+              {selectedRepo.isStatic && (
+                <div className="flex items-center justify-between pt-1 border-t border-white/5">
+                  <span className="text-zinc-500">Project Type:</span>
+                  <span className="text-emerald-400 font-semibold flex items-center gap-1.5">
+                    <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                    <span>Static Website ({selectedRepo.detectedType ? selectedRepo.detectedType.toUpperCase() : "STATIC"})</span>
+                  </span>
+                </div>
+              )}
             </div>
+
+            {selectedRepo.isStatic && (
+              <div className="p-3.5 rounded-xl bg-gradient-to-r from-emerald-950/40 via-zinc-900 to-zinc-900 border border-emerald-500/30 text-xs font-mono text-emerald-300 flex items-center justify-between gap-3">
+                <div className="flex items-center gap-2.5">
+                  <CheckCircle2 className="h-4 w-4 text-emerald-400 shrink-0" />
+                  <span>
+                    <strong>Static website detected:</strong> Zero server secrets required. You can deploy directly!
+                  </span>
+                </div>
+                <span className="text-[10px] px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 font-semibold shrink-0">
+                  Ready to Deploy
+                </span>
+              </div>
+            )}
           </CardContent>
           <CardFooter className="flex items-center justify-between border-t border-white/[0.08] pt-4">
-            <Button variant="ghost" onClick={() => setStep(2)} className="font-mono text-xs cursor-pointer">
-              Back
-            </Button>
-            <Button
-              onClick={() => setStep(4)}
-              className="bg-white hover:bg-zinc-200 text-black font-semibold font-mono text-xs h-9 px-4 cursor-pointer flex items-center gap-1.5"
-            >
-              <span>Continue to Environment Variables</span>
-              <ArrowRight className="h-3.5 w-3.5" />
-            </Button>
+            <div className="flex items-center gap-2">
+              <Button variant="ghost" onClick={() => setStep(2)} className="font-mono text-xs cursor-pointer">
+                Back
+              </Button>
+
+              {/* For static repos: option to add environment variables on the left side */}
+              {selectedRepo.isStatic && (
+                <Button
+                  variant="outline"
+                  onClick={() => setStep(4)}
+                  className="font-mono text-xs h-9 px-3.5 border-white/15 hover:bg-zinc-900 text-zinc-300 hover:text-white cursor-pointer flex items-center gap-1.5"
+                >
+                  <KeyRound className="h-3.5 w-3.5 text-zinc-400" />
+                  <span>Add Environment Variables</span>
+                </Button>
+              )}
+            </div>
+
+            {selectedRepo.isStatic ? (
+              /* For static repos: Direct Deploy button on the right side */
+              <Button
+                onClick={handleFinish}
+                disabled={createProject.isPending || triggerDeploy.isPending}
+                className="bg-emerald-500 hover:bg-emerald-400 text-black font-semibold font-mono text-xs h-9 px-5 cursor-pointer flex items-center gap-2 shadow-lg shadow-emerald-950/30"
+              >
+                {createProject.isPending || triggerDeploy.isPending ? (
+                  <>
+                    <Spinner size="sm" />
+                    <span>Deploying...</span>
+                  </>
+                ) : (
+                  <>
+                    <Sparkles className="h-3.5 w-3.5 text-black" />
+                    <span>Deploy Now</span>
+                  </>
+                )}
+              </Button>
+            ) : (
+              /* For dynamic repos: Standard Continue to Environment Variables */
+              <Button
+                onClick={() => setStep(4)}
+                className="bg-white hover:bg-zinc-200 text-black font-semibold font-mono text-xs h-9 px-4 cursor-pointer flex items-center gap-1.5"
+              >
+                <span>Continue to Environment Variables</span>
+                <ArrowRight className="h-3.5 w-3.5" />
+              </Button>
+            )}
           </CardFooter>
         </Card>
       )}
@@ -1190,7 +1400,14 @@ function NewProjectContent() {
       {wizardModal === "aws" && (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 z-50 animate-in fade-in">
           <AwsConnectWizard
-            onConnected={() => setWizardModal(null)}
+            onConnected={(newConn) => {
+              setConnectedProviders((prev) => ({ ...prev, aws: true }));
+              setSelectedProvider("aws");
+              if (newConn?.id) {
+                setAwsConnectionId(newConn.id);
+              }
+              setWizardModal(null);
+            }}
             onCancel={() => setWizardModal(null)}
           />
         </div>
@@ -1203,6 +1420,40 @@ function NewProjectContent() {
             onConnected={(newConn) => {
               setConnectedProviders((prev) => ({ ...prev, azure: true }));
               setSelectedProvider("azure");
+              setWizardModal(null);
+            }}
+            onCancel={() => setWizardModal(null)}
+          />
+        </div>
+      )}
+
+      {wizardModal === "digitalocean" && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 z-50 animate-in fade-in">
+          <DigitalOceanConnectWizard
+            returnTo="/dashboard/new-project"
+            onConnected={(newConn) => {
+              setConnectedProviders((prev) => ({ ...prev, digitalocean: true }));
+              setSelectedProvider("digitalocean");
+              if (newConn?.id) {
+                setDoConnectionId(newConn.id);
+              }
+              setWizardModal(null);
+            }}
+            onCancel={() => setWizardModal(null)}
+          />
+        </div>
+      )}
+
+      {wizardModal === "gcp" && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 z-50 animate-in fade-in">
+          <GcpConnectWizard
+            returnTo="/dashboard/new-project"
+            onConnected={(newConn) => {
+              setConnectedProviders((prev) => ({ ...prev, gcp: true }));
+              setSelectedProvider("gcp");
+              if (newConn?.id) {
+                setGcpConnectionId(newConn.id);
+              }
               setWizardModal(null);
             }}
             onCancel={() => setWizardModal(null)}

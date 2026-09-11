@@ -10,6 +10,8 @@ import { webhookRoutes } from "./routes/webhooks/github.js";
 import { githubInstallRoutes } from "./routes/github/install.js";
 import { cloudConnectRoutes } from "./routes/cloud-connect.js";
 import { azureOAuthRoutes } from "./routes/azure-oauth.js";
+import { digitalOceanOAuthRoutes } from "./routes/digitalocean-oauth.js";
+import { gcpOAuthRoutes } from "./routes/gcp-oauth.js";
 import { logRoutes } from "./routes/logs.js";
 import { rollbackRoutes } from "./routes/rollback.js";
 import { previewRoutes } from "./routes/preview.js";
@@ -41,6 +43,8 @@ export async function buildApp(opts?: { logger?: boolean }): Promise<FastifyInst
   await app.register(githubInstallRoutes);
   await app.register(cloudConnectRoutes);
   await app.register(azureOAuthRoutes);
+  await app.register(digitalOceanOAuthRoutes);
+  await app.register(gcpOAuthRoutes);
   // Phase 4 — Observability & Rollback
   await app.register(logRoutes);
   await app.register(rollbackRoutes);

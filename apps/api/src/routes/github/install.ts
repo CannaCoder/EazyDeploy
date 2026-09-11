@@ -121,6 +121,81 @@ export const githubInstallRoutes: FastifyPluginAsync = async (fastify) => {
         // use default branch
       }
 
+      // 3. Detect Framework & Static vs Dynamic
+      let isStatic = false;
+      let detectedType = "dynamic";
+
+      try {
+        const defaultBranch = repoData.default_branch || "main";
+        const treeRes = await fetch(
+          `https://api.github.com/repos/${owner}/${repoName}/git/trees/${defaultBranch}?recursive=1`,
+          { headers }
+        );
+        if (treeRes.ok) {
+          const treeData = (await treeRes.json()) as { tree?: Array<{ path: string; type: string }> };
+          const paths = (treeData.tree || [])
+            .filter((t) => t.type === "blob")
+            .map((t) => t.path);
+
+          const hasServerBackend = paths.some(
+            (p) =>
+              p === "Dockerfile" ||
+              p.endsWith("/Dockerfile") ||
+              p === "requirements.txt" ||
+              p === "Pipfile" ||
+              p === "main.py" ||
+              p.endsWith("/main.py") ||
+              p === "go.mod" ||
+              p === "Cargo.toml"
+          );
+
+          const hasHtml = paths.some((p) => p.endsWith("index.html") || p.endsWith(".html"));
+          const hasVite = paths.some((p) => p.includes("vite.config"));
+          const hasNext = paths.some((p) => p.includes("next.config"));
+          const hasPkgJson = paths.includes("package.json");
+
+          if (!hasServerBackend && !hasNext) {
+            if (hasVite) {
+              isStatic = true;
+              detectedType = "vite";
+            } else if (hasHtml && !hasPkgJson) {
+              // Pure HTML/CSS/JS static site
+              isStatic = true;
+              detectedType = "static";
+            } else if (hasPkgJson && hasHtml) {
+              try {
+                const pkgRes = await fetch(
+                  `https://raw.githubusercontent.com/${owner}/${repoName}/${defaultBranch}/package.json`,
+                  { headers: token && token.trim() ? { Authorization: `Bearer ${token.trim()}` } : {} }
+                );
+                if (pkgRes.ok) {
+                  const pkgText = await pkgRes.text();
+                  const isNodeServer =
+                    pkgText.includes('"express"') ||
+                    pkgText.includes('"fastify"') ||
+                    pkgText.includes('"@nestjs"') ||
+                    pkgText.includes('"koa"');
+                  if (!isNodeServer) {
+                    isStatic = true;
+                    detectedType = pkgText.includes('"vite"') ? "vite" : "static";
+                  }
+                }
+              } catch {
+                // ignore
+              }
+            }
+          }
+
+          if (!isStatic) {
+            if (hasNext) detectedType = "nextjs";
+            else if (hasServerBackend) detectedType = "backend";
+            else detectedType = "node";
+          }
+        }
+      } catch {
+        // Fallback
+      }
+
       return reply.send({
         success: true,
         repository: {
@@ -136,6 +211,8 @@ export const githubInstallRoutes: FastifyPluginAsync = async (fastify) => {
           isPrivate: repoData.private || false,
           language: repoData.language || "TypeScript",
           htmlUrl: repoData.html_url,
+          isStatic,
+          detectedType,
         },
       });
     } catch (err: unknown) {

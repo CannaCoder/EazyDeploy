@@ -29,24 +29,149 @@ function decryptIfPresent(encryptedBase64: string | null | undefined): string | 
   }
 }
 
-export interface AzureCredentials {
-  tenantId: string;
-  clientId: string;
-  clientSecret: string;
-  subscriptionId: string;
-  resourceGroup: string;
+export interface CloudCredentials {
+  // Azure
+  tenantId?: string;
+  clientId?: string;
+  clientSecret?: string;
+  subscriptionId?: string;
+  resourceGroup?: string;
+
+  // AWS
+  accessKeyId?: string;
+  secretAccessKey?: string;
+  region?: string;
+  roleArn?: string;
+  externalId?: string;
+
+  // DigitalOcean
+  apiToken?: string;
+
+  // GCP
+  serviceAccountKey?: string;
+  projectId?: string;
 }
+
+export type AzureCredentials = CloudCredentials;
 
 /**
  * Returns credentials for the cloud adapter.
- * Priority: DB connection record (user's own SP) → process.env (platform fallback)
+ * Priority: DB connection record (user's own connection) → process.env (platform fallback)
  */
 export async function getAdapterCredentials(
   connectionId: string | undefined,
   provider: string
-): Promise<Partial<AzureCredentials>> {
-  // Env fallback — always available
-  const envCredentials: Partial<AzureCredentials> = {
+): Promise<CloudCredentials> {
+  if (provider === "gcp") {
+    const envGcpCredentials: CloudCredentials = {
+      apiToken: process.env["GCP_ACCESS_TOKEN"] || process.env["GOOGLE_ACCESS_TOKEN"],
+      projectId: process.env["GCP_PROJECT_ID"] || process.env["GOOGLE_CLOUD_PROJECT"],
+      region: process.env["GCP_REGION"] || "us-central1",
+    };
+
+    if (!connectionId || !process.env["DATABASE_URL"]) {
+      return envGcpCredentials;
+    }
+
+    try {
+      const conn = await db.query.cloudConnections.findFirst({
+        where: eq(cloudConnections.id, connectionId),
+      });
+
+      if (!conn) {
+        console.warn(`[getAdapterCredentials] GCP Connection ${connectionId} not found in DB, using env fallback`);
+        return envGcpCredentials;
+      }
+
+      const decryptedSecret = decryptIfPresent(conn.clientSecretRef);
+      const envProj = process.env["GCP_PROJECT_ID"] || process.env["GOOGLE_CLOUD_PROJECT"];
+      const resolvedProj =
+        conn.clientId && !conn.clientId.startsWith("gcp-proj-")
+          ? conn.clientId
+          : envProj || conn.clientId;
+
+      return {
+        apiToken: decryptedSecret || envGcpCredentials.apiToken,
+        serviceAccountKey: decryptedSecret || undefined,
+        clientId: resolvedProj || undefined,
+        projectId: resolvedProj || undefined,
+        region: conn.resourceGroup || envGcpCredentials.region,
+      };
+    } catch (err) {
+      console.warn(`[getAdapterCredentials] DB lookup failed: ${(err as Error).message}, using env fallback`);
+      return envGcpCredentials;
+    }
+  }
+
+  if (provider === "digitalocean") {
+    const envDOCredentials: CloudCredentials = {
+      apiToken: process.env["DO_ACCESS_TOKEN"] || process.env["DIGITALOCEAN_TOKEN"],
+    };
+
+    if (!connectionId || !process.env["DATABASE_URL"]) {
+      return envDOCredentials;
+    }
+
+    try {
+      const conn = await db.query.cloudConnections.findFirst({
+        where: eq(cloudConnections.id, connectionId),
+      });
+
+      if (!conn) {
+        console.warn(`[getAdapterCredentials] DigitalOcean Connection ${connectionId} not found in DB, using env fallback`);
+        return envDOCredentials;
+      }
+
+      const decryptedToken = decryptIfPresent(conn.clientSecretRef);
+
+      return {
+        apiToken: decryptedToken || envDOCredentials.apiToken,
+        clientId: conn.clientId || undefined,
+      };
+    } catch (err) {
+      console.warn(`[getAdapterCredentials] DB lookup failed: ${(err as Error).message}, using env fallback`);
+      return envDOCredentials;
+    }
+  }
+
+  if (provider === "aws") {
+    const envAwsCredentials: CloudCredentials = {
+      accessKeyId: process.env["AWS_ACCESS_KEY_ID"],
+      secretAccessKey: process.env["AWS_SECRET_ACCESS_KEY"],
+      region: process.env["AWS_REGION"] || "us-east-1",
+    };
+
+    if (!connectionId || !process.env["DATABASE_URL"]) {
+      return envAwsCredentials;
+    }
+
+    try {
+      const conn = await db.query.cloudConnections.findFirst({
+        where: eq(cloudConnections.id, connectionId),
+      });
+
+      if (!conn) {
+        console.warn(`[getAdapterCredentials] AWS Connection ${connectionId} not found in DB, using env fallback`);
+        return envAwsCredentials;
+      }
+
+      const decryptedSecret = decryptIfPresent(conn.clientSecretRef);
+
+      return {
+        accessKeyId: conn.clientId || envAwsCredentials.accessKeyId,
+        secretAccessKey: decryptedSecret || envAwsCredentials.secretAccessKey,
+        region: conn.resourceGroup || envAwsCredentials.region,
+        roleArn: conn.roleArn || undefined,
+        externalId: conn.externalId || undefined,
+      };
+    } catch (err) {
+      console.warn(`[getAdapterCredentials] DB lookup failed: ${(err as Error).message}, using env fallback`);
+      return envAwsCredentials;
+    }
+  }
+
+  // Azure credentials
+  const envAzureCredentials: CloudCredentials = {
     tenantId: process.env["AZURE_TENANT_ID"],
     clientId: process.env["AZURE_CLIENT_ID"],
     clientSecret: process.env["AZURE_CLIENT_SECRET"],
@@ -54,12 +179,8 @@ export async function getAdapterCredentials(
     resourceGroup: process.env["AZURE_RESOURCE_GROUP"] || "eazydeploy-rg",
   };
 
-  if (!connectionId || provider !== "azure") {
-    return envCredentials;
-  }
-
-  if (!process.env["DATABASE_URL"]) {
-    return envCredentials;
+  if (!connectionId || !process.env["DATABASE_URL"]) {
+    return envAzureCredentials;
   }
 
   try {
@@ -69,20 +190,20 @@ export async function getAdapterCredentials(
 
     if (!conn) {
       console.warn(`[getAdapterCredentials] Connection ${connectionId} not found in DB, using env fallback`);
-      return envCredentials;
+      return envAzureCredentials;
     }
 
     const decryptedSecret = decryptIfPresent(conn.clientSecretRef);
 
     return {
-      tenantId: conn.tenantId || envCredentials.tenantId,
-      clientId: conn.clientId || envCredentials.clientId,
-      clientSecret: decryptedSecret || envCredentials.clientSecret,
-      subscriptionId: conn.subscriptionId || envCredentials.subscriptionId,
-      resourceGroup: conn.resourceGroup || envCredentials.resourceGroup,
+      tenantId: conn.tenantId || envAzureCredentials.tenantId,
+      clientId: conn.clientId || envAzureCredentials.clientId,
+      clientSecret: decryptedSecret || envAzureCredentials.clientSecret,
+      subscriptionId: conn.subscriptionId || envAzureCredentials.subscriptionId,
+      resourceGroup: conn.resourceGroup || envAzureCredentials.resourceGroup,
     };
   } catch (err) {
     console.warn(`[getAdapterCredentials] DB lookup failed: ${(err as Error).message}, using env fallback`);
-    return envCredentials;
+    return envAzureCredentials;
   }
 }

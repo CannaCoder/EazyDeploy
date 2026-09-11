@@ -6,6 +6,42 @@ import { httpBatchLink } from "@trpc/client";
 import { trpc } from "./lib/trpc";
 import { ClerkProvider } from "@clerk/nextjs";
 
+// Prevent third-party browser extensions (like MetaMask inpage.js) from triggering the Next.js dev overlay
+if (typeof window !== "undefined") {
+  const isExtensionError = (error: any, filename?: string) => {
+    if (filename && (filename.includes("chrome-extension://") || filename.includes("moz-extension://"))) {
+      return true;
+    }
+    const msg = error?.message || String(error || "");
+    if (msg.includes("MetaMask") || msg.includes("inpage.js")) {
+      return true;
+    }
+    return false;
+  };
+
+  window.addEventListener(
+    "error",
+    (event) => {
+      if (isExtensionError(event.error, event.filename)) {
+        event.stopImmediatePropagation();
+        event.preventDefault();
+      }
+    },
+    true
+  );
+
+  window.addEventListener(
+    "unhandledrejection",
+    (event) => {
+      if (isExtensionError(event.reason)) {
+        event.stopImmediatePropagation();
+        event.preventDefault();
+      }
+    },
+    true
+  );
+}
+
 export function Providers({ children }: { children: ReactNode }) {
   const [queryClient] = useState(
     () =>

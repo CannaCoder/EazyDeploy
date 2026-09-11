@@ -7,6 +7,8 @@ import { Button, Badge, Spinner } from "@shipora/ui";
 import { CloudProviderCard } from "@/components/cloud-connect/cloud-provider-card";
 import { AwsConnectWizard } from "@/components/cloud-connect/aws-connect-wizard";
 import { AzureConnectWizard } from "@/components/cloud-connect/azure-connect-wizard";
+import { DigitalOceanConnectWizard } from "@/components/cloud-connect/digitalocean-connect-wizard";
+import { GcpConnectWizard } from "@/components/cloud-connect/gcp-connect-wizard";
 import type { CloudProvider } from "@shipora/types";
 
 interface ConnectionItem {
@@ -22,16 +24,7 @@ interface ConnectionItem {
 
 function CloudConnectionsContent() {
   const searchParams = useSearchParams();
-  const [connections, setConnections] = useState<ConnectionItem[]>([
-    {
-      id: "conn-aws-primary",
-      provider: "aws",
-      displayName: "AWS Production Account",
-      roleArn: "arn:aws:iam::123456789012:role/ShiporaDeployRole-prod",
-      status: "connected",
-      connectedAt: new Date(Date.now() - 3 * 24 * 60 * 60 * 1000),
-    },
-  ]);
+  const [connections, setConnections] = useState<ConnectionItem[]>([]);
 
   const [notification, setNotification] = useState<{
     type: "success" | "error";
@@ -60,7 +53,7 @@ function CloudConnectionsContent() {
     const provider = searchParams.get("provider");
     const errorMsg = searchParams.get("message");
 
-    if (status === "connected" && provider === "azure") {
+    if (status === "connected" && (provider === "azure" || provider === "digitalocean" || provider === "gcp")) {
       fetch(`${apiUrl}/cloud-connect/connections`)
         .then((res) => (res.ok ? res.json() : null))
         .then((data) => {
@@ -72,7 +65,12 @@ function CloudConnectionsContent() {
 
       setNotification({
         type: "success",
-        message: "Successfully connected Microsoft Azure via 1-Click SSO!",
+        message:
+          provider === "azure"
+            ? "Successfully connected Microsoft Azure via 1-Click SSO!"
+            : provider === "digitalocean"
+            ? "Successfully connected DigitalOcean via 1-Click OAuth!"
+            : "Successfully connected Google Cloud via 1-Click OAuth!",
       });
     } else if (status === "error") {
       setNotification({
@@ -180,16 +178,20 @@ function CloudConnectionsContent() {
             provider="digitalocean"
             title="DigitalOcean"
             description="App Platform & DOCR"
-            badge="Upcoming"
-            disabled={true}
+            badge="1-Click OAuth"
+            isConnected={connections.some((c) => c.provider === "digitalocean")}
+            onConnect={() => setWizardModal("digitalocean")}
+            onSelect={() => setWizardModal("digitalocean")}
           />
 
           <CloudProviderCard
             provider="gcp"
             title="Google Cloud"
             description="Cloud Run & Artifact Reg"
-            badge="Upcoming"
-            disabled={true}
+            badge="1-Click OAuth"
+            isConnected={connections.some((c) => c.provider === "gcp")}
+            onConnect={() => setWizardModal("gcp")}
+            onSelect={() => setWizardModal("gcp")}
           />
         </div>
       </div>
@@ -211,7 +213,7 @@ function CloudConnectionsContent() {
                 >
                   <div className="flex items-start sm:items-center gap-3">
                     <div className="h-8 w-8 rounded bg-zinc-900 border border-white/10 flex items-center justify-center font-bold text-xs text-white shrink-0">
-                      {conn.provider === "aws" ? "AWS" : "AZ"}
+                      {conn.provider === "aws" ? "AWS" : conn.provider === "azure" ? "AZ" : conn.provider === "digitalocean" ? "DO" : "GCP"}
                     </div>
 
                     <div className="space-y-1">
@@ -283,6 +285,24 @@ function CloudConnectionsContent() {
       {wizardModal === "azure" && (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 z-50 animate-in fade-in">
           <AzureConnectWizard
+            onConnected={handleConnectSuccess}
+            onCancel={() => setWizardModal(null)}
+          />
+        </div>
+      )}
+
+      {wizardModal === "digitalocean" && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 z-50 animate-in fade-in">
+          <DigitalOceanConnectWizard
+            onConnected={handleConnectSuccess}
+            onCancel={() => setWizardModal(null)}
+          />
+        </div>
+      )}
+
+      {wizardModal === "gcp" && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 z-50 animate-in fade-in">
+          <GcpConnectWizard
             onConnected={handleConnectSuccess}
             onCancel={() => setWizardModal(null)}
           />

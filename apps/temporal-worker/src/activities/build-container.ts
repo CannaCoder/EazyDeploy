@@ -24,11 +24,17 @@ export async function buildContainerActivity(
     `[buildContainerActivity] Initiating CodeBuild for service '${input.serviceName}' (repo: ${input.repoOwner}/${input.repoName}@${input.commitSha.slice(0, 7)})`
   );
 
-  // If running in test or local dev mode without AWS credentials, return simulated build
+  // If running in test or local dev mode without real AWS credentials, return simulated build
+  const hasRealAws =
+    process.env["AWS_ACCESS_KEY_ID"] &&
+    !process.env["AWS_ACCESS_KEY_ID"].includes("mock") &&
+    process.env["AWS_SECRET_ACCESS_KEY"] &&
+    !process.env["AWS_SECRET_ACCESS_KEY"].includes("mock");
+
   if (
     process.env["VITEST"] === "true" ||
     process.env["NODE_ENV"] === "test" ||
-    (!process.env["AWS_ACCESS_KEY_ID"] && !process.env["AWS_PROFILE"])
+    (!hasRealAws && !process.env["AWS_PROFILE"])
   ) {
     console.log(
       `[buildContainerActivity] Using simulated CodeBuild execution for '${input.serviceName}' -> Image: ${imageUri}`

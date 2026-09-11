@@ -29,6 +29,9 @@ importers:
       '@aws-sdk/client-secrets-manager':
         specifier: ^3.726.0
         version: 3.1112.0
+      '@aws-sdk/client-sts':
+        specifier: ^3.726.0
+        version: 3.1112.0
       '@clerk/fastify':
         specifier: ^2.0.7
         version: 2.6.34(fastify@5.12.0)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
@@ -38,6 +41,9 @@ importers:
       '@shipora/cloud-adapters':
         specifier: workspace:*
         version: link:../../packages/cloud-adapters
+      '@shipora/code-analyzer':
+        specifier: workspace:*
+        version: link:../../packages/code-analyzer
       '@shipora/db':
         specifier: workspace:*
         version: link:../../packages/db

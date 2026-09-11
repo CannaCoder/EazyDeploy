@@ -4,6 +4,9 @@ import { eq } from "drizzle-orm";
 import { createCloudAdapter } from "@shipora/cloud-adapters";
 import { randomUUID } from "crypto";
 
+import { STSClient, GetCallerIdentityCommand } from "@aws-sdk/client-sts";
+import { encryptIfPresent } from "../lib/crypto.js";
+
 export async function ensureDefaultUser(userId = "550e8400-e29b-41d4-a716-446655440000") {
   if (!process.env["DATABASE_URL"]) return;
   try {
@@ -24,20 +27,7 @@ export async function ensureDefaultUser(userId = "550e8400-e29b-41d4-a716-446655
 }
 
 // In-memory registry for active cloud connections (fallback and real-time sync)
-export const inMemoryCloudConnections = new Map<string, any>([
-  [
-    "conn-aws-primary",
-    {
-      id: "conn-aws-primary",
-      userId: "550e8400-e29b-41d4-a716-446655440000",
-      provider: "aws",
-      displayName: "AWS Production Account",
-      roleArn: "arn:aws:iam::123456789012:role/ShiporaDeployRole-prod",
-      status: "connected",
-      connectedAt: new Date().toISOString(),
-    },
-  ],
-]);
+export const inMemoryCloudConnections = new Map<string, any>();
 
 // In-memory registry for pending webhook notifications from CloudFormation
 const pendingAwsWebhooks = new Map<
@@ -255,6 +245,114 @@ export const cloudConnectRoutes: FastifyPluginAsync = async (fastify) => {
     });
   });
 
+  // 2b. Direct AWS IAM Keys Connection (Access Key ID & Secret Access Key)
+  fastify.post<{
+    Body: {
+      accessKeyId: string;
+      secretAccessKey: string;
+      region?: string;
+      displayName?: string;
+      userId?: string;
+    };
+  }>("/cloud-connect/aws/connect-keys", async (request, reply) => {
+    const { accessKeyId, secretAccessKey, region = "us-east-1", displayName, userId } = request.body || {};
+
+    if (!accessKeyId || !secretAccessKey) {
+      return reply.status(400).send({
+        success: false,
+        error: "Both AWS Access Key ID and Secret Access Key are required.",
+      });
+    }
+
+    const trimmedKey = accessKeyId.trim();
+    const trimmedSecret = secretAccessKey.trim();
+    const trimmedRegion = (region || "us-east-1").trim();
+
+    let accountId = "123456789012";
+    let identityArn = `arn:aws:iam::${accountId}:user/connected`;
+
+    const isMockKey = trimmedKey.startsWith("mock_") || trimmedKey.startsWith("test_");
+
+    if (!isMockKey && process.env["VITEST"] !== "true" && process.env["NODE_ENV"] !== "test") {
+      try {
+        const sts = new STSClient({
+          region: trimmedRegion,
+          credentials: {
+            accessKeyId: trimmedKey,
+            secretAccessKey: trimmedSecret,
+          },
+        });
+        const identity = await sts.send(new GetCallerIdentityCommand({}));
+        if (!identity.Account) {
+          throw new Error("Could not retrieve AWS account information with the provided keys.");
+        }
+        accountId = identity.Account;
+        identityArn = identity.Arn || `arn:aws:iam::${accountId}:user/connected`;
+      } catch (err: unknown) {
+        return reply.status(400).send({
+          success: false,
+          error: `AWS credentials verification failed: ${(err as Error).message}`,
+        });
+      }
+    }
+
+    const connectionId = randomUUID();
+    const effectiveUserId = userId || "550e8400-e29b-41d4-a716-446655440000";
+    const encryptedSecret = encryptIfPresent(trimmedSecret);
+    const name = displayName?.trim() || `AWS Account (${accountId})`;
+
+    const connObj = {
+      id: connectionId,
+      userId: effectiveUserId,
+      provider: "aws",
+      displayName: name,
+      roleArn: identityArn,
+      clientId: trimmedKey,
+      clientSecretRef: encryptedSecret,
+      resourceGroup: trimmedRegion, // Store selected region in resourceGroup
+      status: "connected" as const,
+      connectedAt: new Date().toISOString(),
+      lastUsedAt: new Date().toISOString(),
+    };
+
+    inMemoryCloudConnections.set(connectionId, connObj);
+
+    try {
+      await ensureDefaultUser(effectiveUserId);
+      if (process.env["DATABASE_URL"]) {
+        await db.insert(cloudConnections).values({
+          id: connectionId,
+          userId: effectiveUserId,
+          projectId: null,
+          provider: "aws",
+          displayName: name,
+          roleArn: identityArn,
+          clientId: trimmedKey,
+          clientSecretRef: encryptedSecret,
+          resourceGroup: trimmedRegion,
+          status: "connected",
+          connectedAt: new Date(),
+          lastUsedAt: new Date(),
+        });
+      }
+    } catch (err: unknown) {
+      // In dev / test without DB, continue
+    }
+
+    return reply.send({
+      success: true,
+      connection: {
+        id: connectionId,
+        provider: "aws",
+        displayName: name,
+        roleArn: identityArn,
+        region: trimmedRegion,
+        status: "connected",
+        connectedAt: connObj.connectedAt,
+      },
+    });
+  });
+
   // 3. List all Cloud Connections
   fastify.get<{
     Querystring: { userId?: string };
@@ -304,14 +402,19 @@ export const cloudConnectRoutes: FastifyPluginAsync = async (fastify) => {
         connectedAt: new Date().toISOString(),
       });
     }
-    defaultConnections.push({
-      id: "conn-aws-primary",
-      provider: "aws",
-      displayName: "AWS Production Account",
-      status: "connected",
-      roleArn: "arn:aws:iam::123456789012:role/ShiporaDeployRole-prod",
-      connectedAt: new Date().toISOString(),
-    });
+    const hasRealAwsEnv =
+      process.env["AWS_ACCESS_KEY_ID"] &&
+      !process.env["AWS_ACCESS_KEY_ID"].includes("mock");
+    if (hasRealAwsEnv) {
+      defaultConnections.push({
+        id: "conn-aws-primary",
+        provider: "aws",
+        displayName: "AWS Production Account",
+        status: "connected",
+        roleArn: "arn:aws:iam::123456789012:role/ShiporaDeployRole-prod",
+        connectedAt: new Date().toISOString(),
+      });
+    }
 
     return reply.send({
       success: true,

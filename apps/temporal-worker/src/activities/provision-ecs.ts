@@ -27,11 +27,17 @@ export async function provisionECSActivity(
     `[provisionECSActivity] Registering Task Definition for service '${input.serviceName}' (port: ${input.port}, image: ${input.imageUri})`
   );
 
-  // If in test or dev mode without AWS credentials
+  // If in test or dev mode without real AWS credentials
+  const hasRealAws =
+    process.env["AWS_ACCESS_KEY_ID"] &&
+    !process.env["AWS_ACCESS_KEY_ID"].includes("mock") &&
+    process.env["AWS_SECRET_ACCESS_KEY"] &&
+    !process.env["AWS_SECRET_ACCESS_KEY"].includes("mock");
+
   if (
     process.env["VITEST"] === "true" ||
     process.env["NODE_ENV"] === "test" ||
-    (!process.env["AWS_ACCESS_KEY_ID"] && !process.env["AWS_PROFILE"])
+    (!hasRealAws && !process.env["AWS_PROFILE"])
   ) {
     const mockTaskDefArn = `arn:aws:ecs:${region}:${accountId}:task-definition/${taskFamily}:2`;
     const mockPrevTaskDefArn = `arn:aws:ecs:${region}:${accountId}:task-definition/${taskFamily}:1`;

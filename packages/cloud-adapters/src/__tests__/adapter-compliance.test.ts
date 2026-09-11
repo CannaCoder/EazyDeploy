@@ -1,10 +1,12 @@
 import { describe, it, expect } from "vitest";
-import { AwsAdapter, AzureAdapter, createCloudAdapter } from "../index.js";
+import { AwsAdapter, AzureAdapter, DigitalOceanAdapter, GcpAdapter, createCloudAdapter } from "../index.js";
 
 describe("CloudProviderAdapter Compliance Suite", () => {
   const adapters = [
     { name: "AwsAdapter", instance: new AwsAdapter() },
     { name: "AzureAdapter", instance: new AzureAdapter() },
+    { name: "DigitalOceanAdapter", instance: new DigitalOceanAdapter() },
+    { name: "GcpAdapter", instance: new GcpAdapter() },
   ];
 
   adapters.forEach(({ name, instance }) => {
@@ -146,9 +148,20 @@ describe("CloudProviderAdapter Compliance Suite", () => {
       expect(adapter).toBeInstanceOf(AzureAdapter);
     });
 
-    it("throws for Phase 6 providers", () => {
-      expect(() => createCloudAdapter("digitalocean")).toThrow("Phase 6");
-      expect(() => createCloudAdapter("gcp")).toThrow("Phase 6");
+    it("creates DigitalOceanAdapter when provider is digitalocean", () => {
+      const adapter = createCloudAdapter("digitalocean");
+      expect(adapter.provider).toBe("digitalocean");
+      expect(adapter).toBeInstanceOf(DigitalOceanAdapter);
+    });
+
+    it("creates GcpAdapter when provider is gcp", () => {
+      const adapter = createCloudAdapter("gcp");
+      expect(adapter.provider).toBe("gcp");
+      expect(adapter).toBeInstanceOf(GcpAdapter);
+    });
+
+    it("throws for unsupported provider", () => {
+      expect(() => createCloudAdapter("unsupported" as any)).toThrow("Unsupported");
     });
   });
 });

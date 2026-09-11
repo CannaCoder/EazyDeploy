@@ -40,7 +40,7 @@ import {
   CreateInvalidationCommand,
   ListDistributionsCommand,
 } from "@aws-sdk/client-cloudfront";
-import { STSClient, AssumeRoleCommand } from "@aws-sdk/client-sts";
+import { STSClient, AssumeRoleCommand, GetCallerIdentityCommand } from "@aws-sdk/client-sts";
 import fs from "node:fs";
 import path from "node:path";
 import type { CloudConnection } from "@shipora/types";
@@ -68,26 +68,50 @@ import type {
 
 export class AwsAdapter implements CloudProviderAdapter {
   public readonly provider = "aws" as const;
-  private connection?: Partial<CloudConnection>;
+  private connection?: any;
   private region: string;
   private accountId: string;
   private appName: string;
+  private accessKeyId?: string;
+  private secretAccessKey?: string;
 
-  constructor(connection?: Partial<CloudConnection>) {
+  constructor(connection?: any) {
     this.connection = connection;
-    this.region = process.env["AWS_REGION"] || "us-east-1";
+    this.accessKeyId =
+      connection?.accessKeyId ||
+      connection?.clientId ||
+      process.env["AWS_ACCESS_KEY_ID"];
+    this.secretAccessKey =
+      connection?.secretAccessKey ||
+      connection?.clientSecret ||
+      process.env["AWS_SECRET_ACCESS_KEY"];
+    this.region =
+      connection?.region ||
+      connection?.resourceGroup ||
+      process.env["AWS_REGION"] ||
+      "us-east-1";
     this.accountId = process.env["AWS_ACCOUNT_ID"] || "123456789012";
     this.appName = process.env["APP_NAME"] || "shipora";
+  }
+
+  private getClientCredentials() {
+    if (this.accessKeyId && this.secretAccessKey && !this.accessKeyId.includes("mock")) {
+      return {
+        accessKeyId: this.accessKeyId,
+        secretAccessKey: this.secretAccessKey,
+      };
+    }
+    return undefined;
   }
 
   private get isReal(): boolean {
     if (process.env["VITEST"] === "true" || process.env["NODE_ENV"] === "test") {
       return false;
     }
-    const key = process.env["AWS_ACCESS_KEY_ID"];
-    const secret = process.env["AWS_SECRET_ACCESS_KEY"];
+    const key = this.accessKeyId;
+    const secret = this.secretAccessKey;
     const roleArn = this.connection?.roleArn;
-    if (roleArn && roleArn.startsWith("arn:aws:iam::")) return true;
+    if (roleArn && roleArn.startsWith("arn:aws:iam::") && !roleArn.includes("123456789012")) return true;
     if (key && !key.startsWith("mock_") && key.length >= 16 && secret && !secret.startsWith("mock_")) {
       return true;
     }
@@ -102,6 +126,23 @@ export class AwsAdapter implements CloudProviderAdapter {
         success: true,
         identityArn: conn?.roleArn || `arn:aws:iam::${this.accountId}:root`,
       };
+    }
+
+    const creds = this.getClientCredentials();
+    if (creds) {
+      try {
+        const sts = new STSClient({ region: this.region, credentials: creds });
+        const res = await sts.send(new GetCallerIdentityCommand({}));
+        return {
+          success: true,
+          identityArn: res.Arn,
+        };
+      } catch (err: unknown) {
+        return {
+          success: false,
+          error: (err as Error).message,
+        };
+      }
     }
 
     if (conn?.roleArn) {
@@ -157,7 +198,7 @@ export class AwsAdapter implements CloudProviderAdapter {
     }
 
     try {
-      const client = new CodeBuildClient({ region: this.region });
+      const client = new CodeBuildClient({ region: this.region, credentials: this.getClientCredentials() });
       const startCmd = new StartBuildCommand({
         projectName,
         environmentVariablesOverride: [
@@ -229,7 +270,7 @@ export class AwsAdapter implements CloudProviderAdapter {
     }
 
     try {
-      const client = new SecretsManagerClient({ region: this.region });
+      const client = new SecretsManagerClient({ region: this.region, credentials: this.getClientCredentials() });
       let secretArn = `arn:aws:secretsmanager:${this.region}:${this.accountId}:secret:${secretName}`;
 
       try {
@@ -320,7 +361,7 @@ export class AwsAdapter implements CloudProviderAdapter {
     }
 
     try {
-      const client = new ECSClient({ region: this.region });
+      const client = new ECSClient({ region: this.region, credentials: this.getClientCredentials() });
 
       const registerRes = await client.send(
         new RegisterTaskDefinitionCommand({
@@ -461,7 +502,7 @@ export class AwsAdapter implements CloudProviderAdapter {
     }
 
     try {
-      const client = new ElasticLoadBalancingV2Client({ region: this.region });
+      const client = new ElasticLoadBalancingV2Client({ region: this.region, credentials: this.getClientCredentials() });
       let targetGroupArn = "";
       try {
         const describeRes = await client.send(new DescribeTargetGroupsCommand({ Names: [targetGroupName] }));
@@ -547,7 +588,7 @@ export class AwsAdapter implements CloudProviderAdapter {
     }
 
     try {
-      const client = new ECSClient({ region: this.region });
+      const client = new ECSClient({ region: this.region, credentials: this.getClientCredentials() });
       const describeRes = await client.send(
         new DescribeServicesCommand({
           cluster: clusterName,
@@ -587,9 +628,10 @@ export class AwsAdapter implements CloudProviderAdapter {
     }
 
     try {
-      const ecs = new ECSClient({ region: this.region });
-      const secrets = new SecretsManagerClient({ region: this.region });
-      const elbv2 = new ElasticLoadBalancingV2Client({ region: this.region });
+      const creds = this.getClientCredentials();
+      const ecs = new ECSClient({ region: this.region, credentials: creds });
+      const secrets = new SecretsManagerClient({ region: this.region, credentials: creds });
+      const elbv2 = new ElasticLoadBalancingV2Client({ region: this.region, credentials: creds });
 
       for (const serviceName of input.serviceNames || []) {
         const ecsServiceName = `${this.appName}-${serviceName}-svc`;
@@ -671,8 +713,9 @@ export class AwsAdapter implements CloudProviderAdapter {
     }
 
     try {
-      const s3 = new S3Client({ region: this.region });
-      const cloudfront = new CloudFrontClient({ region: "us-east-1" });
+      const creds = this.getClientCredentials();
+      const s3 = new S3Client({ region: this.region, credentials: creds });
+      const cloudfront = new CloudFrontClient({ region: "us-east-1", credentials: creds });
 
       // Ensure bucket exists
       try {
@@ -768,7 +811,7 @@ export class AwsAdapter implements CloudProviderAdapter {
     }
 
     try {
-      const cloudfront = new CloudFrontClient({ region: "us-east-1" });
+      const cloudfront = new CloudFrontClient({ region: "us-east-1", credentials: this.getClientCredentials() });
       await cloudfront.send(
         new CreateInvalidationCommand({
           DistributionId: input.distributionId,

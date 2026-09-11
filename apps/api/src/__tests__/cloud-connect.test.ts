@@ -48,6 +48,43 @@ describe("Cloud Connect & Multi-Cloud API Endpoints (Phase 3.5)", () => {
       expect(data.connection.displayName).toBe("My Test AWS Account");
     });
 
+    it("POST /cloud-connect/aws/connect-keys verifies and stores direct IAM keys", async () => {
+      const res = await app.inject({
+        method: "POST",
+        url: "/cloud-connect/aws/connect-keys",
+        payload: {
+          accessKeyId: "mock_aws_access_key_123",
+          secretAccessKey: "mock_aws_secret_key_456",
+          region: "us-west-2",
+          displayName: "Personal AWS",
+        },
+      });
+
+      expect(res.statusCode).toBe(200);
+      const data = JSON.parse(res.body);
+      expect(data.success).toBe(true);
+      expect(data.connection.provider).toBe("aws");
+      expect(data.connection.displayName).toBe("Personal AWS");
+      expect(data.connection.region).toBe("us-west-2");
+      expect(data.connection.status).toBe("connected");
+    });
+
+    it("POST /cloud-connect/aws/connect-keys fails when keys are missing", async () => {
+      const res = await app.inject({
+        method: "POST",
+        url: "/cloud-connect/aws/connect-keys",
+        payload: {
+          accessKeyId: "",
+          secretAccessKey: "",
+        },
+      });
+
+      expect(res.statusCode).toBe(400);
+      const data = JSON.parse(res.body);
+      expect(data.success).toBe(false);
+      expect(data.error).toContain("required");
+    });
+
     it("GET /cloud-connect/connections returns user's connected clouds", async () => {
       const res = await app.inject({
         method: "GET",
