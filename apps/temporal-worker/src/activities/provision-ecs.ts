@@ -128,6 +128,17 @@ export async function provisionECSActivity(
       // Capture the current task def ARN before updating (used for rollback)
       previousTaskDefinitionArn = existingService.taskDefinition ?? undefined;
 
+      const awsvpcConfiguration = {
+        subnets: [
+          process.env["SUBNET_ID_1"] || "subnet-12345678",
+          process.env["SUBNET_ID_2"] || "subnet-87654321",
+        ],
+        securityGroups: [
+          process.env["ECS_SECURITY_GROUP_ID"] || "sg-12345678",
+        ],
+        assignPublicIp: "ENABLED" as const,
+      };
+
       // Update existing service
       console.log(`[provisionECSActivity] Updating existing ECS service '${ecsServiceName}' with new task def...`);
       const updateRes = await client.send(
@@ -136,10 +147,24 @@ export async function provisionECSActivity(
           service: ecsServiceName,
           taskDefinition: taskDefArn,
           forceNewDeployment: true,
+          networkConfiguration: {
+            awsvpcConfiguration,
+          },
         })
       );
       ecsServiceArn = updateRes.service?.serviceArn || existingService.serviceArn || "";
     } else {
+      const awsvpcConfiguration = {
+        subnets: [
+          process.env["SUBNET_ID_1"] || "subnet-12345678",
+          process.env["SUBNET_ID_2"] || "subnet-87654321",
+        ],
+        securityGroups: [
+          process.env["ECS_SECURITY_GROUP_ID"] || "sg-12345678",
+        ],
+        assignPublicIp: "ENABLED" as const,
+      };
+
       // Create new service
       console.log(`[provisionECSActivity] Creating new ECS Fargate service '${ecsServiceName}'...`);
       const createRes = await client.send(
@@ -150,16 +175,7 @@ export async function provisionECSActivity(
           desiredCount: 1,
           launchType: "FARGATE",
           networkConfiguration: {
-            awsvpcConfiguration: {
-              subnets: [
-                process.env["SUBNET_ID_1"] || "subnet-12345678",
-                process.env["SUBNET_ID_2"] || "subnet-87654321",
-              ],
-              securityGroups: [
-                process.env["ECS_SECURITY_GROUP_ID"] || "sg-12345678",
-              ],
-              assignPublicIp: "DISABLED",
-            },
+            awsvpcConfiguration,
           },
         })
       );

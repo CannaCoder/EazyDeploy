@@ -15,6 +15,7 @@ import {
   ElasticLoadBalancingV2Client,
   CreateTargetGroupCommand,
   DescribeTargetGroupsCommand,
+  ModifyTargetGroupCommand,
   CreateRuleCommand,
   DeleteTargetGroupCommand,
 } from "@aws-sdk/client-elastic-load-balancing-v2";
@@ -199,12 +200,69 @@ export class AwsAdapter implements CloudProviderAdapter {
 
     try {
       const client = new CodeBuildClient({ region: this.region, credentials: this.getClientCredentials() });
+
+      // The build context is always the repo root (".") — the user's repo is cloned there by CodeBuild.
+      // If the user has a Dockerfile at a sub-path (rootPath), we use it; otherwise we generate one.
+      const buildContext = ".";
+      const userDockerfilePath = input.rootPath && input.rootPath !== "." ? `${input.rootPath}/Dockerfile` : "Dockerfile";
+      const buildCmd = input.buildCommand || "";
+
+      // Buildspec is injected per-build so we can auto-generate a smart Dockerfile when the user's
+      // repo doesn't ship one. We detect the framework from package.json at build time.
+      const buildspecOverride = {
+        version: "0.2",
+        phases: {
+          pre_build: {
+            commands: [
+              "echo Logging in to Amazon ECR...",
+              `aws ecr get-login-password --region $AWS_DEFAULT_REGION | docker login --username AWS --password-stdin ${ecrRepoUri}`,
+              // Smart auto-Dockerfile: detect framework from package.json at build time
+              `if [ ! -f "${userDockerfilePath}" ]; then
+  echo 'Auto-generating Dockerfile (framework detection)...'
+  IS_NEXT=$(node -e "try{const p=require('./package.json');console.log(Object.keys({...p.dependencies,...p.devDependencies}).includes('next')?'1':'0')}catch(e){console.log('0')}")
+  HAS_START=$(node -e "try{const p=require('./package.json');console.log(p.scripts&&p.scripts.start?'1':'0')}catch(e){console.log('0')}")
+  HAS_BUILD=$(node -e "try{const p=require('./package.json');console.log(p.scripts&&p.scripts.build?'1':'0')}catch(e){console.log('0')}")
+  if [ "$IS_NEXT" = "1" ]; then
+    printf 'FROM node:20-alpine AS deps\nWORKDIR /app\nCOPY package*.json ./\nRUN npm install\nFROM node:20-alpine AS builder\nWORKDIR /app\nCOPY --from=deps /app/node_modules ./node_modules\nCOPY . .\nENV NEXT_TELEMETRY_DISABLED=1\nRUN npm run build\nFROM node:20-alpine AS runner\nWORKDIR /app\nENV NODE_ENV=production\nENV NEXT_TELEMETRY_DISABLED=1\nCOPY --from=builder /app/public ./public\nCOPY --from=builder /app/.next/standalone ./\nCOPY --from=builder /app/.next/static ./.next/static\nEXPOSE 3000\nCMD ["node", "server.js"]\n' > ${userDockerfilePath}
+  elif [ "$HAS_BUILD" = "1" ] && [ "$HAS_START" = "1" ]; then
+    printf 'FROM node:20-alpine\nWORKDIR /app\nCOPY package*.json ./\nRUN npm install\nCOPY . .\nRUN npm run build\nEXPOSE 3000\nCMD ["npm", "start"]\n' > ${userDockerfilePath}
+  elif [ "$HAS_START" = "1" ]; then
+    printf 'FROM node:20-alpine\nWORKDIR /app\nCOPY package*.json ./\nRUN npm install --omit=dev 2>/dev/null || npm install\nCOPY . .\nEXPOSE 3000\nCMD ["npm", "start"]\n' > ${userDockerfilePath}
+  else
+    MAIN=$(node -e "try{const p=require('./package.json');console.log(p.main||'index.js')}catch(e){console.log('index.js')}")
+    printf "FROM node:20-alpine\nWORKDIR /app\nCOPY package*.json ./\nRUN npm install --omit=dev 2>/dev/null || npm install\nCOPY . .\nEXPOSE 3000\nCMD [\"node\", \"$MAIN\"]\n" > ${userDockerfilePath}
+  fi
+  echo '--- Generated Dockerfile ---' && cat ${userDockerfilePath}
+fi`,
+            ],
+          },
+          build: {
+            commands: [
+              "echo Build started on `date`",
+              `echo Building Docker image for ${input.serviceName}...`,
+              `docker build -t ${ecrRepoUri}:${imageTag} -f ${userDockerfilePath} ${buildContext}`,
+            ],
+          },
+          post_build: {
+            commands: [
+              "echo Build completed on `date`",
+              `docker push ${ecrRepoUri}:${imageTag}`,
+              "echo Image pushed successfully!",
+            ],
+          },
+        },
+      };
+
       const startCmd = new StartBuildCommand({
         projectName,
+        // Clone the correct commit from GitHub at build time
+        sourceTypeOverride: "GITHUB",
+        sourceLocationOverride: `https://github.com/${input.repoOwner}/${input.repoName}`,
+        sourceVersion: input.commitSha,
+        buildspecOverride: JSON.stringify(buildspecOverride),
         environmentVariablesOverride: [
           { name: "SERVICE_NAME", value: input.serviceName, type: "PLAINTEXT" },
           { name: "IMAGE_TAG", value: imageTag, type: "PLAINTEXT" },
-          { name: "BUILD_CONTEXT", value: input.rootPath || ".", type: "PLAINTEXT" },
           { name: "ECR_REPO_URI", value: ecrRepoUri, type: "PLAINTEXT" },
           { name: "COMMIT_SHA", value: input.commitSha, type: "PLAINTEXT" },
         ],
@@ -318,7 +376,9 @@ export class AwsAdapter implements CloudProviderAdapter {
         configuredKeys = input.detectedEnvVars;
       }
 
-      const injectedKeys = input.detectedEnvVars.filter((k) => configuredKeys.includes(k));
+      const injectedKeys = configuredKeys.length > 0
+        ? configuredKeys
+        : input.detectedEnvVars;
       const secretRefs: SecretRef[] = injectedKeys.map((key) => ({
         name: key,
         reference: `${secretArn}:${key}::`,
@@ -422,6 +482,67 @@ export class AwsAdapter implements CloudProviderAdapter {
         (s) => s.serviceName === ecsServiceName && s.status !== "INACTIVE"
       );
 
+      // Ensure target group exists so it can be attached to the ECS service
+      let targetGroupArn: string | undefined;
+      const targetGroupName = `${this.appName}-${input.serviceName}-tg`.slice(0, 32);
+      const albClient = new ElasticLoadBalancingV2Client({ region: this.region, credentials: this.getClientCredentials() });
+      try {
+        const tgRes = await albClient.send(new DescribeTargetGroupsCommand({ Names: [targetGroupName] }));
+        targetGroupArn = tgRes.TargetGroups?.[0]?.TargetGroupArn;
+        if (targetGroupArn) {
+          await albClient.send(new ModifyTargetGroupCommand({
+            TargetGroupArn: targetGroupArn,
+            HealthCheckPath: "/health",
+            Matcher: { HttpCode: "200-399" },
+          }));
+        }
+      } catch {
+        const vpcId = process.env["VPC_ID"] || "vpc-12345678";
+        try {
+          const createTgRes = await albClient.send(
+            new CreateTargetGroupCommand({
+              Name: targetGroupName,
+              Protocol: "HTTP",
+              Port: input.port,
+              VpcId: vpcId,
+              TargetType: "ip",
+              HealthCheckProtocol: "HTTP",
+              HealthCheckPath: "/health",
+              HealthCheckIntervalSeconds: 15,
+              HealthyThresholdCount: 2,
+              UnhealthyThresholdCount: 3,
+              Matcher: { HttpCode: "200-399" },
+              Tags: [
+                { Key: "shipora:managed-by", Value: "shipora" },
+                { Key: "shipora:project-id", Value: input.projectId },
+              ],
+            })
+          );
+          targetGroupArn = createTgRes.TargetGroups?.[0]?.TargetGroupArn;
+        } catch (tgErr: unknown) {
+          console.warn(`[AwsAdapter] Could not pre-create target group: ${(tgErr as Error).message}`);
+        }
+      }
+
+      const awsvpcConfiguration = {
+        subnets: [
+          process.env["SUBNET_ID_1"] || "subnet-12345678",
+          process.env["SUBNET_ID_2"] || "subnet-87654321",
+        ],
+        securityGroups: [process.env["ECS_SECURITY_GROUP_ID"] || "sg-12345678"],
+        assignPublicIp: "ENABLED" as const,
+      };
+
+      const loadBalancers = targetGroupArn
+        ? [
+            {
+              targetGroupArn,
+              containerName: "main",
+              containerPort: input.port,
+            },
+          ]
+        : undefined;
+
       let ecsServiceArn: string;
       if (existingService) {
         const updateRes = await client.send(
@@ -430,6 +551,10 @@ export class AwsAdapter implements CloudProviderAdapter {
             service: ecsServiceName,
             taskDefinition: taskDefArn,
             forceNewDeployment: true,
+            networkConfiguration: {
+              awsvpcConfiguration,
+            },
+            ...(loadBalancers ? { loadBalancers } : {}),
           })
         );
         ecsServiceArn = updateRes.service?.serviceArn || existingService.serviceArn || "";
@@ -442,15 +567,9 @@ export class AwsAdapter implements CloudProviderAdapter {
             desiredCount: 1,
             launchType: "FARGATE",
             networkConfiguration: {
-              awsvpcConfiguration: {
-                subnets: [
-                  process.env["SUBNET_ID_1"] || "subnet-12345678",
-                  process.env["SUBNET_ID_2"] || "subnet-87654321",
-                ],
-                securityGroups: [process.env["ECS_SECURITY_GROUP_ID"] || "sg-12345678"],
-                assignPublicIp: "DISABLED",
-              },
+              awsvpcConfiguration,
             },
+            ...(loadBalancers ? { loadBalancers } : {}),
             tags: [
               { key: "shipora:managed-by", value: "shipora" },
               { key: "shipora:project-id", value: input.projectId },
@@ -507,6 +626,14 @@ export class AwsAdapter implements CloudProviderAdapter {
       try {
         const describeRes = await client.send(new DescribeTargetGroupsCommand({ Names: [targetGroupName] }));
         targetGroupArn = describeRes.TargetGroups?.[0]?.TargetGroupArn || "";
+        
+        // Ensure existing target groups use the correct health check path
+        if (targetGroupArn) {
+          await client.send(new ModifyTargetGroupCommand({
+            TargetGroupArn: targetGroupArn,
+            HealthCheckPath: "/health"
+          }));
+        }
       } catch {
         targetGroupArn = "";
       }
@@ -520,7 +647,7 @@ export class AwsAdapter implements CloudProviderAdapter {
             VpcId: vpcId,
             TargetType: "ip",
             HealthCheckProtocol: "HTTP",
-            HealthCheckPath: "/",
+            HealthCheckPath: "/health",
             HealthCheckIntervalSeconds: 15,
             HealthyThresholdCount: 2,
             UnhealthyThresholdCount: 3,

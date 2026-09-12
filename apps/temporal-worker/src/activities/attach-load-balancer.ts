@@ -53,6 +53,16 @@ export async function attachLoadBalancerActivity(
         new DescribeTargetGroupsCommand({ Names: [targetGroupName] })
       );
       targetGroupArn = describeRes.TargetGroups?.[0]?.TargetGroupArn || "";
+      if (targetGroupArn) {
+        const { ModifyTargetGroupCommand } = await import("@aws-sdk/client-elastic-load-balancing-v2");
+        await client.send(
+          new ModifyTargetGroupCommand({
+            TargetGroupArn: targetGroupArn,
+            HealthCheckPath: "/health",
+            Matcher: { HttpCode: "200-399" },
+          })
+        ).catch(() => {});
+      }
     } catch {
       targetGroupArn = "";
     }
@@ -67,10 +77,11 @@ export async function attachLoadBalancerActivity(
           VpcId: vpcId,
           TargetType: "ip", // Fargate awsvpc mode requires IP target type
           HealthCheckProtocol: "HTTP",
-          HealthCheckPath: "/",
+          HealthCheckPath: "/health",
           HealthCheckIntervalSeconds: 15,
           HealthyThresholdCount: 2,
           UnhealthyThresholdCount: 3,
+          Matcher: { HttpCode: "200-399" },
         })
       );
       targetGroupArn = createTgRes.TargetGroups?.[0]?.TargetGroupArn || "";
