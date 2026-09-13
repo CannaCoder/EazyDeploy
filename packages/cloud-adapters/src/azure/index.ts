@@ -38,6 +38,76 @@ function sleep(ms: number) {
   return new Promise((r) => setTimeout(r, ms));
 }
 
+async function runStreamingCommand(
+  cmd: string,
+  args: string[],
+  options: { cwd?: string; input?: string; timeout?: number },
+  onLog: (line: string, level?: "info" | "warn" | "error") => Promise<void> | void
+): Promise<void> {
+  const { spawn } = await import("child_process");
+  const { createInterface } = await import("readline");
+
+  return new Promise<void>((resolve, reject) => {
+    const proc = spawn(cmd, args, {
+      cwd: options.cwd,
+      stdio: [options.input ? "pipe" : "ignore", "pipe", "pipe"],
+    });
+
+    let isDone = false;
+    let timeoutTimer: NodeJS.Timeout | undefined;
+    if (options.timeout) {
+      timeoutTimer = setTimeout(() => {
+        if (!isDone) {
+          isDone = true;
+          proc.kill("SIGKILL");
+          reject(new Error(`Command timed out after ${options.timeout}ms: ${cmd} ${args.join(" ")}`));
+        }
+      }, options.timeout);
+    }
+
+    if (options.input && proc.stdin) {
+      proc.stdin.write(options.input);
+      proc.stdin.end();
+    }
+
+    if (proc.stdout) {
+      const rlOut = createInterface({ input: proc.stdout });
+      rlOut.on("line", (line) => {
+        const trimmed = line.trim();
+        if (trimmed) void onLog(`[build] ${trimmed}`);
+      });
+    }
+
+    if (proc.stderr) {
+      const rlErr = createInterface({ input: proc.stderr });
+      rlErr.on("line", (line) => {
+        const trimmed = line.trim();
+        if (trimmed) void onLog(`[build] ${trimmed}`);
+      });
+    }
+
+    proc.on("error", (err) => {
+      if (!isDone) {
+        isDone = true;
+        if (timeoutTimer) clearTimeout(timeoutTimer);
+        reject(err);
+      }
+    });
+
+    proc.on("close", (code) => {
+      if (!isDone) {
+        isDone = true;
+        if (timeoutTimer) clearTimeout(timeoutTimer);
+        if (code === 0) {
+          resolve();
+        } else {
+          reject(new Error(`Command failed with exit code ${code}: ${cmd} ${args.join(" ")}`));
+        }
+      }
+    });
+  });
+}
+
 export class AzureAdapter implements CloudProviderAdapter {
   public readonly provider = "azure" as const;
   private credential: ClientSecretCredential;
@@ -233,6 +303,107 @@ export class AzureAdapter implements CloudProviderAdapter {
     }
   }
 
+  private async buildContainerViaACRQuickRun(
+    acrName: string,
+    armToken: string,
+    imageUri: string,
+    buildContextDir: string,
+    dockerfilePath: string
+  ): Promise<{ success: boolean; error?: string }> {
+    try {
+      await this.log(`[build] ☁️ Attempting Azure Container Registry Quick Run...`);
+      const uploadUrlEndpoint = `https://management.azure.com/subscriptions/${this.subscriptionId}/resourceGroups/${this.resourceGroup}/providers/Microsoft.ContainerRegistry/registries/${acrName}/listBuildSourceUploadUrl?api-version=2019-04-01`;
+      const uploadRes = await fetch(uploadUrlEndpoint, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${armToken}`, "Content-Length": "0" },
+      });
+      if (!uploadRes.ok) {
+        const errText = await uploadRes.text();
+        return { success: false, error: `listBuildSourceUploadUrl failed (${uploadRes.status}): ${errText}` };
+      }
+      const uploadData = (await uploadRes.json()) as { uploadUrl?: string; relativePath?: string };
+      if (!uploadData.uploadUrl || !uploadData.relativePath) {
+        return { success: false, error: "Missing uploadUrl or relativePath in ACR response" };
+      }
+
+      const tarPath = `/tmp/acr-build-${Date.now()}.tar.gz`;
+      const { execSync } = await import("child_process");
+      execSync(`tar -czf "${tarPath}" -C "${buildContextDir}" .`, { stdio: "pipe" });
+
+      const tarData = fs.readFileSync(tarPath);
+      const putRes = await fetch(uploadData.uploadUrl, {
+        method: "PUT",
+        headers: {
+          "x-ms-blob-type": "BlockBlob",
+          "Content-Type": "application/x-tar",
+          "Content-Length": String(tarData.length),
+        },
+        body: tarData,
+      });
+      try {
+        fs.unlinkSync(tarPath);
+      } catch {
+        /* ignore */
+      }
+
+      if (!putRes.ok) {
+        const putErr = await putRes.text();
+        return { success: false, error: `Blob upload failed (${putRes.status}): ${putErr}` };
+      }
+
+      const scheduleEndpoint = `https://management.azure.com/subscriptions/${this.subscriptionId}/resourceGroups/${this.resourceGroup}/providers/Microsoft.ContainerRegistry/registries/${acrName}/scheduleRun?api-version=2019-04-01`;
+      const scheduleRes = await fetch(scheduleEndpoint, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${armToken}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          type: "DockerBuildRequest",
+          imageNames: [imageUri],
+          isPushEnabled: true,
+          sourceLocation: uploadData.relativePath,
+          platform: { os: "Linux", architecture: "amd64" },
+          dockerFilePath: dockerfilePath || "Dockerfile",
+        }),
+      });
+
+      if (!scheduleRes.ok) {
+        const scheduleErr = await scheduleRes.text();
+        return { success: false, error: scheduleErr };
+      }
+
+      const runData = (await scheduleRes.json()) as { id?: string; runId?: string };
+      const runId = runData.runId || (runData.id ? runData.id.split("/").pop() : "");
+      if (!runId) {
+        return { success: false, error: "No runId returned from scheduleRun" };
+      }
+
+      await this.log(`[build] ACR Quick Run queued (Run ID: ${runId}). Streaming status...`);
+      const runStatusUrl = `https://management.azure.com/subscriptions/${this.subscriptionId}/resourceGroups/${this.resourceGroup}/providers/Microsoft.ContainerRegistry/registries/${acrName}/runs/${runId}?api-version=2019-04-01`;
+      for (let i = 0; i < 120; i++) {
+        await sleep(5000);
+        const pollRes = await fetch(runStatusUrl, {
+          headers: { Authorization: `Bearer ${armToken}` },
+        });
+        if (pollRes.ok) {
+          const pollData = (await pollRes.json()) as { status?: string };
+          const status = pollData.status;
+          await this.log(`[build] ACR Task ${runId}: ${status}`);
+          if (status === "Succeeded") {
+            return { success: true };
+          }
+          if (status === "Failed" || status === "Canceled" || status === "Error") {
+            return { success: false, error: `ACR Run ${runId} ${status}` };
+          }
+        }
+      }
+      return { success: false, error: "ACR Quick Run timed out after 10 minutes" };
+    } catch (e) {
+      return { success: false, error: (e as Error).message };
+    }
+  }
+
   public async buildImage(input: BuildImageInput): Promise<BuildImageResult> {
     const acrName = `eazydeploy${this.subscriptionId.replace(/-/g, "").slice(0, 12)}`.toLowerCase();
     const imageTag = `${input.serviceName}-${input.commitSha.slice(0, 7)}`;
@@ -408,11 +579,11 @@ export class AzureAdapter implements CloudProviderAdapter {
           }
         }
 
-        let dockerfileArg = "";
+        let customDockerfileName: string | undefined;
         if (inlineDockerfile) {
-          const dockerfileTmp = `${tmpDir}/Dockerfile.generated`;
+          const dockerfileTmp = join(buildContext, "Dockerfile.generated");
           writeFileSync(dockerfileTmp, inlineDockerfile);
-          dockerfileArg = `-f ${dockerfileTmp}`;
+          customDockerfileName = "Dockerfile.generated";
           await this.log(`[build] Using auto-generated Dockerfile`);
         } else {
           // If using repo Dockerfile, check for common monorepo issues (e.g. npm ci without lockfile)
@@ -427,6 +598,12 @@ export class AzureAdapter implements CloudProviderAdapter {
               modified = true;
             }
 
+            // Ensure Next.js builds have Webpack fallback if Turbopack fails under emulation
+            if (dfContent.includes("npm run build") && !dfContent.includes("--webpack")) {
+              dfContent = dfContent.replace(/RUN npm run build(?!\s*\|\|)/g, "RUN npm run build || npx next build --webpack");
+              modified = true;
+            }
+
             // Ensure PORT and HOST bindings exist in Dockerfile if not explicitly set
             if (!dfContent.includes("ENV PORT=") && !dfContent.includes("PORT=")) {
               dfContent = dfContent.replace(
@@ -437,40 +614,94 @@ export class AzureAdapter implements CloudProviderAdapter {
             }
 
             if (modified) {
-              const dockerfileAdapted = `${tmpDir}/Dockerfile.adapted`;
+              const dockerfileAdapted = join(buildContext, "Dockerfile.adapted");
               writeFileSync(dockerfileAdapted, dfContent);
-              dockerfileArg = `-f ${dockerfileAdapted}`;
-              await this.log(`[build] Adapted Dockerfile for networking and dependencies`);
+              customDockerfileName = "Dockerfile.adapted";
+              await this.log(`[build] Adapted Dockerfile for networking, build resilience, and dependencies`);
             }
           }
         }
 
+        const buildStart = Date.now();
+        const dockerfilePathToUse = customDockerfileName
+          ? join(buildContext, customDockerfileName)
+          : join(buildContext, "Dockerfile");
+
+        // 1. Attempt ACR Quick Run (Cloud Native Build)
+        try {
+          const quickRunRes = await this.buildContainerViaACRQuickRun(
+            acrName,
+            armToken,
+            imageUri,
+            buildContext,
+            customDockerfileName || "Dockerfile"
+          );
+          if (quickRunRes.success) {
+            const durationSeconds = Math.round((Date.now() - buildStart) / 1000);
+            await this.log(`[build] ✅ ACR Cloud Build succeeded: ${imageUri} (${durationSeconds}s total)`);
+            try { execSync(`rm -rf "${tmpDir}"`, { stdio: "pipe" }); } catch { /* ignore */ }
+            return {
+              success: true,
+              serviceName: input.serviceName,
+              imageUri,
+              buildId: imageTag,
+              buildDurationSeconds: durationSeconds,
+            };
+          } else {
+            await this.log(`[build] ℹ️ ACR Cloud Build unavailable: ${quickRunRes.error}`);
+            await this.log(`[build] ⚡ Running container build with real-time log streaming...`);
+          }
+        } catch (acrErr) {
+          await this.log(`[build] ℹ️ ACR Cloud Build skipped (${(acrErr as Error).message}). Using streaming container build...`);
+        }
+
+        // 2. Container Build with Real-time Log Streaming
         // Docker login to ACR
         await this.log(`[build] Logging into ACR: ${loginServer}`);
-        execSync(
-          `docker login "${loginServer}" -u "${acrUsername}" --password-stdin`,
-          { input: acrPassword, stdio: ["pipe", "pipe", "pipe"], timeout: 30000 }
+        await runStreamingCommand(
+          "docker",
+          ["login", loginServer, "-u", acrUsername, "--password-stdin"],
+          { input: acrPassword, timeout: 30000 },
+          (line) => this.log(line)
         );
 
         // Build image for linux/amd64
-        const buildStart = Date.now();
         await this.log(`[build] Building Docker image (linux/amd64): ${imageUri}`);
-        execSync(
-          `docker build --platform linux/amd64 ${dockerfileArg} -t "${imageUri}" "${buildContext}"`,
-          { stdio: "pipe", timeout: 600000 } // 10 min timeout
+        const buildArgs = ["build", "--platform", "linux/amd64"];
+        if (customDockerfileName) {
+          buildArgs.push("-f", dockerfilePathToUse);
+        }
+        buildArgs.push("-t", imageUri, buildContext);
+
+        await runStreamingCommand(
+          "docker",
+          buildArgs,
+          { timeout: 600000 },
+          (line) => this.log(line)
         );
         await this.log(`[build] ✅ Image built (${Math.round((Date.now() - buildStart) / 1000)}s)`);
 
-        // Push image
+        // Push image with streaming logs
         await this.log(`[build] Pushing image to ACR...`);
-        execSync(`docker push "${imageUri}"`, { stdio: "pipe", timeout: 300000 });
+        await runStreamingCommand(
+          "docker",
+          ["push", imageUri],
+          { timeout: 300000 },
+          (line) => this.log(line)
+        );
         const durationSeconds = Math.round((Date.now() - buildStart) / 1000);
         await this.log(`[build] ✅ Image pushed: ${imageUri} (${durationSeconds}s total)`);
 
         // Cleanup temp dir
-        execSync(`rm -rf "${tmpDir}"`, { stdio: "pipe" });
+        try { execSync(`rm -rf "${tmpDir}"`, { stdio: "pipe" }); } catch { /* ignore */ }
 
-        return { success: true, serviceName: input.serviceName, imageUri, buildId: imageTag, buildDurationSeconds: durationSeconds };
+        return {
+          success: true,
+          serviceName: input.serviceName,
+          imageUri,
+          buildId: imageTag,
+          buildDurationSeconds: durationSeconds,
+        };
       } catch (buildErr) {
         // Cleanup on error
         try { execSync(`rm -rf "${tmpDir}"`, { stdio: "pipe" }); } catch { /* ignore */ }
