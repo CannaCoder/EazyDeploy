@@ -35,6 +35,50 @@ describe("CloudProviderCard Component", () => {
     expect(screen.getByText("DigitalOcean")).toBeDefined();
     expect(screen.getByText("Coming Soon")).toBeDefined();
   });
+
+  it("renders selected state and triggers onSelect callback on click", () => {
+    const handleSelect = vi.fn();
+    render(
+      <CloudProviderCard
+        provider="azure"
+        title="Microsoft Azure"
+        description="Container Apps • ACR • Key Vault"
+        badge="1-Click SSO"
+        isConnected={true}
+        isSelected={true}
+        onSelect={handleSelect}
+      />
+    );
+
+    expect(screen.getByText("Microsoft Azure")).toBeDefined();
+    expect(screen.getByText("1-Click SSO")).toBeDefined();
+    expect(screen.getByText("Connected")).toBeDefined();
+
+    const card = screen.getByText("Microsoft Azure").closest("div");
+    if (card) fireEvent.click(card);
+    expect(handleSelect).toHaveBeenCalledWith("azure");
+  });
+
+  it("renders GCP provider card with Connect button when disconnected", () => {
+    const handleConnect = vi.fn();
+    render(
+      <CloudProviderCard
+        provider="gcp"
+        title="Google Cloud"
+        description="Cloud Run • Artifact Reg • Secrets"
+        badge="1-Click OAuth"
+        isConnected={false}
+        onConnect={handleConnect}
+      />
+    );
+
+    expect(screen.getByText("Google Cloud")).toBeDefined();
+    expect(screen.getByText("Not connected")).toBeDefined();
+    const connectBtn = screen.getByText("Connect");
+    expect(connectBtn).toBeDefined();
+    fireEvent.click(connectBtn);
+    expect(handleConnect).toHaveBeenCalledWith("gcp");
+  });
 });
 
 describe("AzureConnectWizard Component (1-Click Microsoft SSO)", () => {

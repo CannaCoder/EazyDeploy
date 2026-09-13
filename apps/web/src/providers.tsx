@@ -4,7 +4,6 @@ import { useState, type ReactNode } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { httpBatchLink } from "@trpc/client";
 import { trpc } from "./lib/trpc";
-import { ClerkProvider } from "@clerk/nextjs";
 
 // Prevent third-party browser extensions (like MetaMask inpage.js) from triggering the Next.js dev overlay
 if (typeof window !== "undefined") {
@@ -70,17 +69,9 @@ export function Providers({ children }: { children: ReactNode }) {
     })
   );
 
-  const clerkKey = process.env["NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY"];
-
-  const content = (
+  return (
     <trpc.Provider client={trpcClient} queryClient={queryClient}>
       <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
     </trpc.Provider>
   );
-
-  if (clerkKey) {
-    return <ClerkProvider publishableKey={clerkKey}>{content}</ClerkProvider>;
-  }
-
-  return content;
 }

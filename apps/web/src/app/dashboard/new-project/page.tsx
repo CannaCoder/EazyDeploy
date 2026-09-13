@@ -1,6 +1,5 @@
 "use client";
 
-export const dynamic = "force-dynamic";
 
 import React, { useState, useEffect, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
@@ -30,6 +29,7 @@ import {
   AlertCircle,
   Sparkles,
   ArrowRight,
+  ArrowLeft,
   Eye,
   EyeOff,
   Plus,
@@ -329,13 +329,9 @@ function NewProjectContent() {
             digitalocean: !!hasDo,
             gcp: !!hasGcp,
           });
-          if (hasAws && !hasAzure && !hasDo && !hasGcp) {
+          if (hasAws && !hasAzure) {
             setSelectedProvider("aws");
-          } else if (hasDo && !hasAzure && !hasAws && !hasGcp) {
-            setSelectedProvider("digitalocean");
-          } else if (hasGcp && !hasAzure && !hasAws && !hasDo) {
-            setSelectedProvider("gcp");
-          } else if (hasAzure) {
+          } else {
             setSelectedProvider("azure");
           }
         }
@@ -433,6 +429,7 @@ function NewProjectContent() {
       }
 
       setVerifiedRepo(data.repository);
+      handleSelectRepo(data.repository);
     } catch (err: unknown) {
       setErrorMsg((err as Error).message);
     } finally {
@@ -544,7 +541,7 @@ function NewProjectContent() {
   );
 
   return (
-    <div className="max-w-3xl mx-auto space-y-8 animate-in fade-in duration-200">
+    <div className="max-w-4xl lg:max-w-5xl mx-auto space-y-8 animate-in fade-in duration-200">
       {/* Header */}
       <div>
         <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-white font-mono">
@@ -556,11 +553,44 @@ function NewProjectContent() {
       </div>
 
       {/* Step Progress Tracker */}
-      <div className="grid grid-cols-4 gap-2">
-        <div className={`h-1.5 rounded-full transition-colors ${step >= 1 ? "bg-white" : "bg-zinc-800"}`} />
-        <div className={`h-1.5 rounded-full transition-colors ${step >= 2 ? "bg-white" : "bg-zinc-800"}`} />
-        <div className={`h-1.5 rounded-full transition-colors ${step >= 3 ? "bg-white" : "bg-zinc-800"}`} />
-        <div className={`h-1.5 rounded-full transition-colors ${step >= 4 ? "bg-white" : "bg-zinc-800"}`} />
+      <div className="space-y-2">
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs font-mono">
+          {[
+            { num: 1, label: "Repository" },
+            { num: 2, label: "Cloud Target" },
+            { num: 3, label: "Configure" },
+            { num: 4, label: "Environment" },
+          ].map((s) => (
+            <div key={s.num} className="space-y-1.5">
+              <div className="flex items-center justify-between">
+                <span
+                  className={`text-[11px] font-semibold transition-colors flex items-center gap-1 ${
+                    step === s.num
+                      ? "text-white"
+                      : step > s.num
+                      ? "text-emerald-400"
+                      : "text-zinc-500"
+                  }`}
+                >
+                  <span>{step > s.num ? "✓" : `${s.num}.`}</span>
+                  <span>{s.label}</span>
+                </span>
+                {step === s.num && (
+                  <span className="h-1.5 w-1.5 rounded-full bg-white animate-pulse" />
+                )}
+              </div>
+              <div
+                className={`h-1 rounded-full transition-all duration-300 ${
+                  step > s.num
+                    ? "bg-emerald-400"
+                    : step === s.num
+                    ? "bg-white"
+                    : "bg-zinc-800"
+                }`}
+              />
+            </div>
+          ))}
+        </div>
       </div>
 
       {errorMsg && (
@@ -628,7 +658,13 @@ function NewProjectContent() {
             {/* TAB 1: Direct Repo Import */}
             {activeTab === "direct" && (
               <div className="space-y-4">
-                <form onSubmit={handleVerifyDirectRepo} className="space-y-3">
+                <form
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    handleVerifyDirectRepo(e);
+                  }}
+                  className="space-y-3"
+                >
                   <div className="space-y-1.5">
                     <label className="text-xs font-medium text-zinc-300 block font-mono">
                       GitHub Repository Name or URL:
@@ -639,10 +675,20 @@ function NewProjectContent() {
                         placeholder="e.g. facebook/react or your-username/your-monorepo"
                         value={repoInput}
                         onChange={(e) => setRepoInput(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") {
+                            e.preventDefault();
+                            handleVerifyDirectRepo();
+                          }
+                        }}
                         className="flex-1 h-10 px-3 rounded-lg bg-zinc-900 border border-white/15 text-xs text-white placeholder:text-zinc-600 font-mono focus:outline-none focus:border-white"
                       />
                       <Button
-                        type="submit"
+                        type="button"
+                        onClick={(e) => {
+                          e.preventDefault();
+                          handleVerifyDirectRepo();
+                        }}
                         disabled={isVerifyingRepo || !repoInput.trim()}
                         className="h-10 px-5 text-xs font-mono bg-white hover:bg-zinc-200 text-black font-semibold cursor-pointer shrink-0"
                       >
@@ -766,10 +812,20 @@ function NewProjectContent() {
                         placeholder="ghp_... or github_pat_..."
                         value={personalToken}
                         onChange={(e) => setPersonalToken(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") {
+                            e.preventDefault();
+                            handleVerifyToken();
+                          }
+                        }}
                         className="flex-1 h-10 px-3 rounded-lg bg-zinc-900 border border-white/15 text-xs text-white placeholder:text-zinc-600 font-mono focus:outline-none focus:border-white"
                       />
                       <Button
-                        type="submit"
+                        type="button"
+                        onClick={(e) => {
+                          e.preventDefault();
+                          handleVerifyToken();
+                        }}
                         disabled={isVerifyingToken || !personalToken.trim()}
                         className="h-10 px-5 text-xs font-mono bg-white hover:bg-zinc-200 text-black font-semibold cursor-pointer shrink-0"
                       >
@@ -906,22 +962,43 @@ function NewProjectContent() {
 
       {/* STEP 2: Select Cloud Deployment Target */}
       {step === 2 && selectedRepo && (
-        <Card className="bg-[#09090b] border-white/10 shadow-2xl">
-          <CardHeader>
-            <div className="flex items-center justify-between">
-              <div>
-                <CardTitle className="text-lg text-white font-mono">Step 2: Select Cloud Provider</CardTitle>
-                <CardDescription className="text-zinc-400">
-                  Deploying <strong className="text-white font-mono">{selectedRepo.fullName}</strong>. Choose where to build and run your services.
+        <Card className="bg-[#09090b] border-white/10 shadow-2xl overflow-hidden">
+          <CardHeader className="pb-4">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div className="space-y-1">
+                <div className="flex items-center gap-2">
+                  <span className="text-[10px] font-mono uppercase tracking-wider px-2 py-0.5 rounded-full bg-white/10 text-zinc-300 font-semibold border border-white/10">
+                    Step 2 of 4
+                  </span>
+                  <CardTitle className="text-lg text-white font-mono">Select Cloud Provider</CardTitle>
+                </div>
+                <CardDescription className="text-zinc-400 text-xs sm:text-sm flex flex-wrap items-center gap-1.5 pt-0.5">
+                  <span>Deploying</span>
+                  <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded bg-zinc-900 border border-white/10 text-white font-mono text-xs font-semibold">
+                    <Github className="h-3 w-3 text-white" />
+                    {selectedRepo.fullName}
+                  </span>
+                  <span>Choose where to build and run your services.</span>
                 </CardDescription>
               </div>
-              <Button variant="ghost" size="sm" onClick={() => setStep(1)} className="font-mono text-xs cursor-pointer">
-                Change Repo
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => {
+                  setStep(1);
+                  if (selectedRepo?.fullName) {
+                    setRepoInput(selectedRepo.fullName);
+                  }
+                }}
+                className="font-mono text-xs cursor-pointer text-zinc-400 hover:text-white shrink-0 self-start sm:self-center flex items-center gap-1.5"
+              >
+                <ArrowLeft className="h-3 w-3" />
+                <span>Change Repo</span>
               </Button>
             </div>
           </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+          <CardContent className="space-y-5">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5">
               <CloudProviderCard
                 provider="aws"
                 title="Amazon Web Services"
@@ -948,63 +1025,99 @@ function NewProjectContent() {
                 provider="digitalocean"
                 title="DigitalOcean"
                 description="App Platform • DOCR • Spaces"
-                badge="1-Click OAuth"
-                isConnected={connectedProviders.digitalocean}
-                isSelected={selectedProvider === "digitalocean"}
-                onSelect={(p) => setSelectedProvider(p)}
-                onConnect={!connectedProviders.digitalocean ? handleConnectDigitalOcean : undefined}
+                badge="Coming Soon"
+                disabled={true}
               />
 
               <CloudProviderCard
                 provider="gcp"
                 title="Google Cloud"
                 description="Cloud Run • Artifact Reg • Secrets"
-                badge="1-Click OAuth"
-                isConnected={connectedProviders.gcp}
-                isSelected={selectedProvider === "gcp"}
-                onSelect={(p) => setSelectedProvider(p)}
-                onConnect={!connectedProviders.gcp ? handleConnectGcp : undefined}
+                badge="Coming Soon"
+                disabled={true}
               />
             </div>
 
             {/* Active Account Status Banner */}
-            {selectedProvider === "aws" && connectedProviders.aws && (
-              <div className="p-3 rounded-lg bg-emerald-950/20 border border-emerald-500/30 text-xs font-mono text-emerald-300 flex items-center gap-2">
-                <CheckCircle2 className="h-4 w-4 text-emerald-400 shrink-0" />
-                <span>Targeting connected account: <strong className="text-white">AWS Production Account</strong></span>
+            {connectedProviders[selectedProvider] ? (
+              <div className="p-4 rounded-xl bg-gradient-to-r from-emerald-950/20 via-zinc-900 to-zinc-900 border border-emerald-500/30 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs font-mono">
+                <div className="flex items-center gap-3">
+                  <div className="h-8 w-8 rounded-lg bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center shrink-0">
+                    <CheckCircle2 className="h-4 w-4 text-emerald-400" />
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <span className="text-zinc-400">Targeting connected account:</span>
+                      <strong className="text-white font-semibold">
+                        {selectedProvider === "aws" && "AWS Production Account (Role Delegation)"}
+                        {selectedProvider === "azure" && "Azure Subscription (1-Click SSO)"}
+                        {selectedProvider === "digitalocean" && "DigitalOcean App Platform (1-Click OAuth)"}
+                        {selectedProvider === "gcp" && "Google Cloud Run (1-Click OAuth)"}
+                      </strong>
+                    </div>
+                    <p className="text-[11px] text-zinc-400 mt-0.5 flex items-center gap-1.5">
+                      <ShieldCheck className="h-3.5 w-3.5 text-emerald-400 shrink-0" />
+                      <span>Zero static credentials stored • Ephemeral STS tokens • Least-privilege role</span>
+                    </p>
+                  </div>
+                </div>
+                <span className="text-[10px] px-2.5 py-1 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 font-semibold self-start sm:self-center shrink-0">
+                  Ready to Deploy
+                </span>
               </div>
-            )}
-
-            {selectedProvider === "azure" && connectedProviders.azure && (
-              <div className="p-3 rounded-lg bg-emerald-950/20 border border-emerald-500/30 text-xs font-mono text-emerald-300 flex items-center gap-2">
-                <CheckCircle2 className="h-4 w-4 text-emerald-400 shrink-0" />
-                <span>Targeting connected account: <strong className="text-white">Azure Subscription (1-Click SSO)</strong></span>
-              </div>
-            )}
-
-            {selectedProvider === "digitalocean" && connectedProviders.digitalocean && (
-              <div className="p-3 rounded-lg bg-emerald-950/20 border border-emerald-500/30 text-xs font-mono text-emerald-300 flex items-center gap-2">
-                <CheckCircle2 className="h-4 w-4 text-emerald-400 shrink-0" />
-                <span>Targeting connected account: <strong className="text-white">DigitalOcean App Platform (1-Click OAuth)</strong></span>
-              </div>
-            )}
-
-            {selectedProvider === "gcp" && connectedProviders.gcp && (
-              <div className="p-3 rounded-lg bg-emerald-950/20 border border-emerald-500/30 text-xs font-mono text-emerald-300 flex items-center gap-2">
-                <CheckCircle2 className="h-4 w-4 text-emerald-400 shrink-0" />
-                <span>Targeting connected account: <strong className="text-white">Google Cloud Run (1-Click OAuth)</strong></span>
+            ) : (
+              <div className="p-4 rounded-xl bg-gradient-to-r from-amber-950/20 via-zinc-900 to-zinc-900 border border-amber-500/30 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs font-mono">
+                <div className="flex items-center gap-3">
+                  <div className="h-8 w-8 rounded-lg bg-amber-500/10 border border-amber-500/20 flex items-center justify-center shrink-0">
+                    <AlertCircle className="h-4 w-4 text-amber-400" />
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-1.5">
+                      <strong className="text-white font-semibold">
+                        {selectedProvider === "aws" && "Amazon Web Services"}
+                        {selectedProvider === "azure" && "Microsoft Azure"}
+                        {selectedProvider === "digitalocean" && "DigitalOcean"}
+                        {selectedProvider === "gcp" && "Google Cloud"}
+                      </strong>
+                      <span className="text-zinc-400">is not connected yet.</span>
+                    </div>
+                    <p className="text-[11px] text-zinc-400 mt-0.5">
+                      Connect your account to allow Shipora to provision resources and deploy containers.
+                    </p>
+                  </div>
+                </div>
+                <Button
+                  type="button"
+                  size="sm"
+                  onClick={() => {
+                    if (selectedProvider === "aws") setWizardModal("aws");
+                    else if (selectedProvider === "azure") handleConnectAzure();
+                    else if (selectedProvider === "digitalocean") handleConnectDigitalOcean();
+                    else if (selectedProvider === "gcp") handleConnectGcp();
+                  }}
+                  className="bg-white hover:bg-zinc-200 text-black font-semibold text-xs h-8 px-3 font-mono cursor-pointer shrink-0 self-start sm:self-center flex items-center gap-1"
+                >
+                  <span>Connect Now</span>
+                  <ArrowRight className="h-3 w-3" />
+                </Button>
               </div>
             )}
           </CardContent>
           <CardFooter className="flex items-center justify-between border-t border-white/[0.08] pt-4">
-            <Button variant="ghost" onClick={() => setStep(1)} className="font-mono text-xs cursor-pointer">
-              Back
+            <Button
+              variant="ghost"
+              onClick={() => setStep(1)}
+              className="font-mono text-xs cursor-pointer flex items-center gap-1.5 text-zinc-400 hover:text-white"
+            >
+              <ArrowLeft className="h-3.5 w-3.5" />
+              <span>Back</span>
             </Button>
             <Button
               onClick={() => setStep(3)}
-              className="bg-white hover:bg-zinc-200 text-black font-semibold font-mono text-xs h-9 px-4 cursor-pointer"
+              className="bg-white hover:bg-zinc-200 text-black font-semibold font-mono text-xs h-9 px-5 cursor-pointer flex items-center gap-1.5 shadow-sm"
             >
-              Continue to Configuration
+              <span>Continue to Configuration</span>
+              <ArrowRight className="h-3.5 w-3.5" />
             </Button>
           </CardFooter>
         </Card>

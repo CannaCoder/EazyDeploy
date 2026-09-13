@@ -1,6 +1,5 @@
 "use client";
 
-export const dynamic = "force-dynamic";
 
 import React, { useEffect } from "react";
 import Link from "next/link";
@@ -50,8 +49,8 @@ export default function DeploymentDetailsPage() {
     { id: deploymentId },
     {
       enabled: !!deploymentId,
-      refetchInterval: (data) => {
-        const status = data?.status;
+      refetchInterval: (query) => {
+        const status = query.state.data?.status;
         return ACTIVE_STATUSES.has(status ?? "") ? 3000 : false;
       },
     }

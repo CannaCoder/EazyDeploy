@@ -178,20 +178,16 @@ function CloudConnectionsContent() {
             provider="digitalocean"
             title="DigitalOcean"
             description="App Platform & DOCR"
-            badge="1-Click OAuth"
-            isConnected={connections.some((c) => c.provider === "digitalocean")}
-            onConnect={() => setWizardModal("digitalocean")}
-            onSelect={() => setWizardModal("digitalocean")}
+            badge="Coming Soon"
+            disabled={true}
           />
 
           <CloudProviderCard
             provider="gcp"
             title="Google Cloud"
             description="Cloud Run & Artifact Reg"
-            badge="1-Click OAuth"
-            isConnected={connections.some((c) => c.provider === "gcp")}
-            onConnect={() => setWizardModal("gcp")}
-            onSelect={() => setWizardModal("gcp")}
+            badge="Coming Soon"
+            disabled={true}
           />
         </div>
       </div>
