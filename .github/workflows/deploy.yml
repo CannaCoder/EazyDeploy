@@ -121,26 +121,27 @@ jobs:
       - name: Register new API task definition
         id: api-task-def
         run: |
-          NEW_IMAGE="${{ secrets.ECR_REGISTRY }}/shipora-services:api-sha-${{ env.DEPLOY_SHA }}"
+          export NEW_IMAGE="${{ secrets.ECR_REGISTRY }}/shipora-services:api-sha-${{ env.DEPLOY_SHA }}"
           
           # Fetch current task definition, update image, strip non-updatable fields
           CURRENT=$(aws ecs describe-task-definition \
             --task-definition ${{ secrets.API_TASK_FAMILY }} \
             --query 'taskDefinition' --output json)
           
-          NEW_TD=$(echo "$CURRENT" | python3 -c "
-          import sys, json
+          echo "$CURRENT" | python3 -c "
+          import sys, os, json
           td = json.load(sys.stdin)
           for cd in td['containerDefinitions']:
               if 'api' in cd.get('name','').lower():
-                  cd['image'] = '$NEW_IMAGE'
+                  cd['image'] = os.environ['NEW_IMAGE']
           for key in ['taskDefinitionArn','revision','status','requiresAttributes','compatibilities','registeredAt','registeredBy']:
               td.pop(key, None)
-          print(json.dumps(td))
-          ")
+          with open('/tmp/api-task-def.json', 'w') as f:
+              json.dump(td, f)
+          "
           
-          ARN=$(echo "$NEW_TD" | aws ecs register-task-definition \
-            --cli-input-json file:///dev/stdin \
+          ARN=$(aws ecs register-task-definition \
+            --cli-input-json file:///tmp/api-task-def.json \
             --query 'taskDefinition.taskDefinitionArn' --output text)
           
           echo "task_arn=$ARN" >> "$GITHUB_OUTPUT"
@@ -159,25 +160,26 @@ jobs:
       - name: Register new Worker task definition
         id: worker-task-def
         run: |
-          NEW_IMAGE="${{ secrets.ECR_REGISTRY }}/shipora-services:temporal-worker-sha-${{ env.DEPLOY_SHA }}"
+          export NEW_IMAGE="${{ secrets.ECR_REGISTRY }}/shipora-services:temporal-worker-sha-${{ env.DEPLOY_SHA }}"
           
           CURRENT=$(aws ecs describe-task-definition \
             --task-definition ${{ secrets.WORKER_TASK_FAMILY }} \
             --query 'taskDefinition' --output json)
           
-          NEW_TD=$(echo "$CURRENT" | python3 -c "
-          import sys, json
+          echo "$CURRENT" | python3 -c "
+          import sys, os, json
           td = json.load(sys.stdin)
           for cd in td['containerDefinitions']:
               if 'worker' in cd.get('name','').lower() or 'temporal' in cd.get('name','').lower():
-                  cd['image'] = '$NEW_IMAGE'
+                  cd['image'] = os.environ['NEW_IMAGE']
           for key in ['taskDefinitionArn','revision','status','requiresAttributes','compatibilities','registeredAt','registeredBy']:
               td.pop(key, None)
-          print(json.dumps(td))
-          ")
+          with open('/tmp/worker-task-def.json', 'w') as f:
+              json.dump(td, f)
+          "
           
-          ARN=$(echo "$NEW_TD" | aws ecs register-task-definition \
-            --cli-input-json file:///dev/stdin \
+          ARN=$(aws ecs register-task-definition \
+            --cli-input-json file:///tmp/worker-task-def.json \
             --query 'taskDefinition.taskDefinitionArn' --output text)
           
           echo "task_arn=$ARN" >> "$GITHUB_OUTPUT"
