@@ -7,8 +7,17 @@ import { createCipheriv, createDecipheriv, randomBytes } from "crypto";
 const ALGORITHM = "aes-256-gcm";
 const IV_LENGTH = 12; // 96-bit IV recommended for GCM
 
+const DEFAULT_TEST_KEY = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+
 function getKey(): Buffer {
-  const hex = process.env["ENCRYPTION_KEY"];
+  const hex =
+    process.env["ENCRYPTION_KEY"] ||
+    (process.env["NODE_ENV"] === "test" ||
+    process.env["VITEST"] === "true" ||
+    process.env["CI"] === "true"
+      ? DEFAULT_TEST_KEY
+      : undefined);
+
   if (!hex || hex.length !== 64) {
     throw new Error(
       "ENCRYPTION_KEY must be a 64-character hex string (32 bytes)."

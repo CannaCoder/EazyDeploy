@@ -31,3 +31,4 @@ jobs:
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL_TEST || 'postgresql://postgres:postgres@localhost:5432/shipora_test' }}
           GITHUB_APP_WEBHOOK_SECRET: 'ci-test-webhook-secret'
+          ENCRYPTION_KEY: '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef'
