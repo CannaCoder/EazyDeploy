@@ -76,7 +76,7 @@ function NewProjectContent() {
   const [step, setStep] = useState<1 | 2 | 3 | 4>(1);
   const [activeTab, setActiveTab] = useState<"direct" | "token" | "app">("direct");
 
-  // Environment variables state (Vercel style)
+  // Environment variables state (Key-Value & .env parser)
   const [envMode, setEnvMode] = useState<"paste" | "form">("paste");
   const [envRawText, setEnvRawText] = useState("");
   const [envVarsList, setEnvVarsList] = useState<
@@ -1264,7 +1264,7 @@ function NewProjectContent() {
         </Card>
       )}
 
-      {/* STEP 4: Environment Variables (Vercel Style) */}
+      {/* STEP 4: Environment Variables */}
       {step === 4 && selectedRepo && (
         <Card className="bg-[#09090b] border-white/10 shadow-2xl">
           <CardHeader>
@@ -1277,7 +1277,7 @@ function NewProjectContent() {
                   <CardTitle className="text-lg text-white font-mono flex items-center gap-2">
                     <span>Step 4: Environment Variables</span>
                     <span className="text-[10px] font-normal px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
-                      Vercel Style
+                      Encrypted at Rest
                     </span>
                   </CardTitle>
                   <CardDescription className="text-zinc-400 text-xs mt-0.5">

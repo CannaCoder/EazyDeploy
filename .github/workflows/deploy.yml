@@ -1,0 +1,261 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Shipora — Continuous Deployment Pipeline
+#
+# Triggers: push to `main` AFTER ci.yml passes
+# What it does:
+#   1. Builds 3 Docker images in parallel (api, web, temporal-worker)
+#   2. Pushes each to ECR with tags: sha-<commit> + latest
+#   3. Updates ECS task definitions for api and temporal-worker services
+#   4. Forces new ECS deployments and waits for stability
+#   5. Runs a health-check against the ALB /health endpoint
+#
+# Required GitHub Actions Secrets (Settings → Secrets → Actions):
+#   AWS_ACCESS_KEY_ID       — IAM user with ECR push + ECS deploy permissions
+#   AWS_SECRET_ACCESS_KEY   — Matching secret key
+#   AWS_REGION              — e.g. eu-north-1
+#   AWS_ACCOUNT_ID          — e.g. 690990575414
+#   ECR_REGISTRY            — e.g. 690990575414.dkr.ecr.eu-north-1.amazonaws.com
+#   ECS_CLUSTER_NAME        — e.g. shipora-cluster
+#   ALB_DNS_NAME            — e.g. shipora-alb-xxxx.eu-north-1.elb.amazonaws.com
+#   API_SERVICE_NAME        — ECS service name for the API (e.g. shipora-api)
+#   WORKER_SERVICE_NAME     — ECS service name for temporal-worker (e.g. shipora-temporal-worker)
+#   API_TASK_FAMILY         — ECS task definition family for API
+#   WORKER_TASK_FAMILY      — ECS task definition family for temporal-worker
+# ─────────────────────────────────────────────────────────────────────────────
+
+name: Deploy
+
+on:
+  workflow_run:
+    workflows: ["CI"]
+    branches: [main]
+    types:
+      - completed
+  workflow_dispatch:
+
+# Prevent concurrent deploys — queue them, cancel older runs of this workflow
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  DEPLOY_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+
+jobs:
+  # ── Build images in parallel ───────────────────────────────────────────────
+  build:
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+    name: Build & Push — ${{ matrix.app }}
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - app: api
+            dockerfile: apps/api/Dockerfile
+            image_suffix: api
+          - app: web
+            dockerfile: apps/web/Dockerfile
+            image_suffix: web
+          - app: temporal-worker
+            dockerfile: apps/temporal-worker/Dockerfile
+            image_suffix: temporal-worker
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: ecr-login
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and push ${{ matrix.app }} image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          push: true
+          tags: |
+            ${{ secrets.ECR_REGISTRY }}/shipora-services:${{ matrix.image_suffix }}-sha-${{ env.DEPLOY_SHA }}
+            ${{ secrets.ECR_REGISTRY }}/shipora-services:${{ matrix.image_suffix }}-latest
+          cache-from: type=gha,scope=${{ matrix.app }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.app }}
+
+  # ── Deploy to ECS (runs after all 3 builds succeed) ───────────────────────
+  deploy:
+    name: Deploy to ECS
+    runs-on: ubuntu-latest
+    needs: build
+    environment: production
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      # ── API Service ────────────────────────────────────────────────────────
+      - name: Register new API task definition
+        id: api-task-def
+        run: |
+          NEW_IMAGE="${{ secrets.ECR_REGISTRY }}/shipora-services:api-sha-${{ env.DEPLOY_SHA }}"
+          
+          # Fetch current task definition, update image, strip non-updatable fields
+          CURRENT=$(aws ecs describe-task-definition \
+            --task-definition ${{ secrets.API_TASK_FAMILY }} \
+            --query 'taskDefinition' --output json)
+          
+          NEW_TD=$(echo "$CURRENT" | python3 -c "
+          import sys, json
+          td = json.load(sys.stdin)
+          for cd in td['containerDefinitions']:
+              if 'api' in cd.get('name','').lower():
+                  cd['image'] = '$NEW_IMAGE'
+          for key in ['taskDefinitionArn','revision','status','requiresAttributes','compatibilities','registeredAt','registeredBy']:
+              td.pop(key, None)
+          print(json.dumps(td))
+          ")
+          
+          ARN=$(echo "$NEW_TD" | aws ecs register-task-definition \
+            --cli-input-json file:///dev/stdin \
+            --query 'taskDefinition.taskDefinitionArn' --output text)
+          
+          echo "task_arn=$ARN" >> "$GITHUB_OUTPUT"
+
+      - name: Deploy API to ECS
+        run: |
+          aws ecs update-service \
+            --cluster ${{ secrets.ECS_CLUSTER_NAME }} \
+            --service ${{ secrets.API_SERVICE_NAME }} \
+            --task-definition ${{ steps.api-task-def.outputs.task_arn }} \
+            --force-new-deployment \
+            --deployment-configuration "minimumHealthyPercent=50,maximumPercent=200" \
+            --output json > /dev/null
+
+      # ── Temporal Worker Service ────────────────────────────────────────────
+      - name: Register new Worker task definition
+        id: worker-task-def
+        run: |
+          NEW_IMAGE="${{ secrets.ECR_REGISTRY }}/shipora-services:temporal-worker-sha-${{ env.DEPLOY_SHA }}"
+          
+          CURRENT=$(aws ecs describe-task-definition \
+            --task-definition ${{ secrets.WORKER_TASK_FAMILY }} \
+            --query 'taskDefinition' --output json)
+          
+          NEW_TD=$(echo "$CURRENT" | python3 -c "
+          import sys, json
+          td = json.load(sys.stdin)
+          for cd in td['containerDefinitions']:
+              if 'worker' in cd.get('name','').lower() or 'temporal' in cd.get('name','').lower():
+                  cd['image'] = '$NEW_IMAGE'
+          for key in ['taskDefinitionArn','revision','status','requiresAttributes','compatibilities','registeredAt','registeredBy']:
+              td.pop(key, None)
+          print(json.dumps(td))
+          ")
+          
+          ARN=$(echo "$NEW_TD" | aws ecs register-task-definition \
+            --cli-input-json file:///dev/stdin \
+            --query 'taskDefinition.taskDefinitionArn' --output text)
+          
+          echo "task_arn=$ARN" >> "$GITHUB_OUTPUT"
+
+      - name: Deploy Temporal Worker to ECS
+        run: |
+          aws ecs update-service \
+            --cluster ${{ secrets.ECS_CLUSTER_NAME }} \
+            --service ${{ secrets.WORKER_SERVICE_NAME }} \
+            --task-definition ${{ steps.worker-task-def.outputs.task_arn }} \
+            --force-new-deployment \
+            --deployment-configuration "minimumHealthyPercent=50,maximumPercent=200" \
+            --output json > /dev/null
+
+      # ── Wait for both services to stabilise ───────────────────────────────
+      - name: Wait for API service stability
+        run: |
+          echo "Waiting for API ECS service to stabilise (max 10 min)..."
+          aws ecs wait services-stable \
+            --cluster ${{ secrets.ECS_CLUSTER_NAME }} \
+            --services ${{ secrets.API_SERVICE_NAME }}
+
+      - name: Wait for Worker service stability
+        run: |
+          echo "Waiting for Temporal Worker ECS service to stabilise (max 10 min)..."
+          aws ecs wait services-stable \
+            --cluster ${{ secrets.ECS_CLUSTER_NAME }} \
+            --services ${{ secrets.WORKER_SERVICE_NAME }}
+
+      # ── Post-deploy health check ───────────────────────────────────────────
+      - name: Health check via ALB
+        run: |
+          echo "Running post-deploy health check..."
+          
+          MAX_RETRIES=12
+          RETRY_DELAY=10
+          STATUS=""
+          
+          for i in $(seq 1 $MAX_RETRIES); do
+            HTTP_CODE=$(curl -s -o /tmp/health_response.json -w "%{http_code}" \
+              "http://${{ secrets.ALB_DNS_NAME }}/health" --max-time 10 || echo "000")
+            
+            if [ "$HTTP_CODE" = "200" ]; then
+              STATUS=$(cat /tmp/health_response.json | python3 -c "import sys,json; print(json.load(sys.stdin).get('status','unknown'))" 2>/dev/null || echo "unknown")
+              if [ "$STATUS" = "ok" ]; then
+                echo "✅ Health check passed (attempt $i/$MAX_RETRIES)"
+                echo "Response: $(cat /tmp/health_response.json)"
+                exit 0
+              fi
+            fi
+            
+            echo "⏳ Attempt $i/$MAX_RETRIES — HTTP $HTTP_CODE — retrying in ${RETRY_DELAY}s..."
+            sleep $RETRY_DELAY
+          done
+          
+          echo "❌ Health check failed after $MAX_RETRIES attempts"
+          cat /tmp/health_response.json || true
+          exit 1
+
+      # ── Deployment summary ─────────────────────────────────────────────────
+      - name: Deployment summary
+        if: success()
+        run: |
+          echo "## ✅ Deployment Successful" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Service | Image Tag |" >> $GITHUB_STEP_SUMMARY
+          echo "|---------|-----------|" >> $GITHUB_STEP_SUMMARY
+          echo "| API | \`api-sha-${{ env.DEPLOY_SHA }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Web | \`web-sha-${{ env.DEPLOY_SHA }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Temporal Worker | \`temporal-worker-sha-${{ env.DEPLOY_SHA }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Commit:** ${{ env.DEPLOY_SHA }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Triggered by:** ${{ github.actor }}" >> $GITHUB_STEP_SUMMARY
+
+      - name: Notify failure
+        if: failure()
+        run: |
+          echo "## ❌ Deployment Failed" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Commit \`${{ env.DEPLOY_SHA }}\` failed to deploy. Check logs above." >> $GITHUB_STEP_SUMMARY
+          echo "Run /decompose to investigate the root cause." >> $GITHUB_STEP_SUMMARY

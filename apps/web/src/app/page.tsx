@@ -60,8 +60,8 @@ export default function LandingPage() {
 
             <span className="text-zinc-700 hidden sm:inline">/</span>
             <div className="hidden sm:flex items-center gap-1.5 text-[11px] font-mono text-zinc-400">
-              <span className="h-1.5 w-1.5 rounded-full bg-white" />
-              <span>v2.4.0 · Live</span>
+              <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" />
+              <span>Engine Active</span>
             </div>
           </div>
 
@@ -452,7 +452,7 @@ export default function LandingPage() {
             <Link href="/dashboard/new-project" className="hover:text-white transition-colors">
               New Project
             </Link>
-            <a href="https://github.com" target="_blank" rel="noreferrer" className="hover:text-white transition-colors">
+            <a href="https://github.com/CannaCoder/EazyDeploy" target="_blank" rel="noreferrer" className="hover:text-white transition-colors">
               GitHub
             </a>
           </div>

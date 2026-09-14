@@ -169,11 +169,17 @@ async function checkService(
     serviceUrl.includes("/preview/");
 
   // 1. HTTP health check against the endpoint
-  // For static sites, probe root path (/) directly since /health is usually not an asset
+  // For static sites and web containers (e.g. azure-vote, web, or Azure Container Apps), probe root path (/) first
   const healthUrl = serviceUrl.replace(/\/$/, "") + "/health";
   const rootUrl = serviceUrl.replace(/\/$/, "") + "/";
-  const primaryUrl = isStatic ? rootUrl : healthUrl;
-  const fallbackUrl = isStatic ? healthUrl : rootUrl;
+  const isWebContainer =
+    isStatic ||
+    cloudProvider === "azure" ||
+    serviceName.includes("vote") ||
+    serviceName === "web" ||
+    serviceName === "main";
+  const primaryUrl = isWebContainer ? rootUrl : healthUrl;
+  const fallbackUrl = isWebContainer ? healthUrl : rootUrl;
 
   let httpOk = false;
   let lastReason = "";

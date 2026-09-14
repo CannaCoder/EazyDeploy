@@ -1,0 +1,12 @@
+{"timestamp":"2026-09-14T17:23:47.820Z","step":"PREFLIGHT","status":"INFO","message":"Verifying environment and AWS credentials..."}
+{"timestamp":"2026-09-14T17:23:47.823Z","step":"PREFLIGHT","status":"INFO","message":"AWS credentials detected: Key=AKIA2B... Region=eu-north-1 Account=690990575414"}
+{"timestamp":"2026-09-14T17:23:47.823Z","step":"PREFLIGHT","status":"SUCCESS","message":"Environment and credentials validated."}
+{"timestamp":"2026-09-14T17:23:47.823Z","step":"API","status":"INFO","message":"Pinging API health at http://localhost:4000/health..."}
+{"timestamp":"2026-09-14T17:23:47.861Z","step":"API","status":"SUCCESS","message":"Connected to Shipora API (shipora-api)"}
+{"timestamp":"2026-09-14T17:23:47.861Z","step":"PROJECT","status":"INFO","message":"Configuring project for repo aws-samples/ecs-demo-php-simple-app..."}
+{"timestamp":"2026-09-14T17:23:49.334Z","step":"PROJECT","status":"INFO","message":"Found existing project: b0c203a1-6af5-4185-ac07-68ce0ee9b09f (test-ecs-demo-php-simple-app)"}
+{"timestamp":"2026-09-14T17:23:49.334Z","step":"DEPLOY","status":"INFO","message":"Triggering deployment on project b0c203a1-6af5-4185-ac07-68ce0ee9b09f..."}
+{"timestamp":"2026-09-14T17:23:51.944Z","step":"DEPLOY","status":"SUCCESS","message":"Deployment triggered! Deployment ID: 74a71155-00f9-41a9-8e4e-1e27ec116714"}
+{"timestamp":"2026-09-14T17:23:51.944Z","step":"POLL","status":"INFO","message":"Starting polling loop (every 10s, max 1200s)..."}
+{"timestamp":"2026-09-14T17:24:33.113Z","step":"PROGRESS","status":"INFO","message":"[10s] Stage: BUILDING (0%) — processing"}
+{"timestamp":"2026-09-14T17:44:33.186Z","step":"DEPLOY","status":"ERROR","message":"Deployment exceeded maximum timeout of 1200s"}

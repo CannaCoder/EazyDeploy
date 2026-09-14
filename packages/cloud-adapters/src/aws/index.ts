@@ -483,44 +483,60 @@ fi`,
       );
 
       // Ensure target group exists so it can be attached to the ECS service
-      let targetGroupArn: string | undefined;
-      const targetGroupName = `${this.appName}-${input.serviceName}-tg`.slice(0, 32);
+      let targetGroupArn: string | undefined = existingService?.loadBalancers?.[0]?.targetGroupArn;
+      const port = input.port || 80;
+      const targetGroupName = `${this.appName}-${input.serviceName}-${port}-tg`.slice(0, 32);
+      const isWebService = port === 80 || input.serviceName === "web" || input.serviceName === "main";
+      const healthCheckPath = isWebService ? "/" : "/health";
       const albClient = new ElasticLoadBalancingV2Client({ region: this.region, credentials: this.getClientCredentials() });
-      try {
-        const tgRes = await albClient.send(new DescribeTargetGroupsCommand({ Names: [targetGroupName] }));
-        targetGroupArn = tgRes.TargetGroups?.[0]?.TargetGroupArn;
-        if (targetGroupArn) {
+
+      if (targetGroupArn) {
+        try {
           await albClient.send(new ModifyTargetGroupCommand({
             TargetGroupArn: targetGroupArn,
-            HealthCheckPath: "/health",
+            HealthCheckPath: healthCheckPath,
             Matcher: { HttpCode: "200-399" },
           }));
+        } catch (mErr: unknown) {
+          console.warn(`[AwsAdapter] Could not update existing target group: ${(mErr as Error).message}`);
         }
-      } catch {
-        const vpcId = process.env["VPC_ID"] || "vpc-12345678";
+      } else {
         try {
-          const createTgRes = await albClient.send(
-            new CreateTargetGroupCommand({
-              Name: targetGroupName,
-              Protocol: "HTTP",
-              Port: input.port,
-              VpcId: vpcId,
-              TargetType: "ip",
-              HealthCheckProtocol: "HTTP",
-              HealthCheckPath: "/health",
-              HealthCheckIntervalSeconds: 15,
-              HealthyThresholdCount: 2,
-              UnhealthyThresholdCount: 3,
+          const tgRes = await albClient.send(new DescribeTargetGroupsCommand({ Names: [targetGroupName] }));
+          targetGroupArn = tgRes.TargetGroups?.[0]?.TargetGroupArn;
+          if (targetGroupArn) {
+            await albClient.send(new ModifyTargetGroupCommand({
+              TargetGroupArn: targetGroupArn,
+              HealthCheckPath: healthCheckPath,
               Matcher: { HttpCode: "200-399" },
-              Tags: [
-                { Key: "shipora:managed-by", Value: "shipora" },
-                { Key: "shipora:project-id", Value: input.projectId },
-              ],
-            })
-          );
-          targetGroupArn = createTgRes.TargetGroups?.[0]?.TargetGroupArn;
-        } catch (tgErr: unknown) {
-          console.warn(`[AwsAdapter] Could not pre-create target group: ${(tgErr as Error).message}`);
+            }));
+          }
+        } catch {
+          const vpcId = process.env["VPC_ID"] || "vpc-12345678";
+          try {
+            const createTgRes = await albClient.send(
+              new CreateTargetGroupCommand({
+                Name: targetGroupName,
+                Protocol: "HTTP",
+                Port: port,
+                VpcId: vpcId,
+                TargetType: "ip",
+                HealthCheckProtocol: "HTTP",
+                HealthCheckPath: healthCheckPath,
+                HealthCheckIntervalSeconds: 15,
+                HealthyThresholdCount: 2,
+                UnhealthyThresholdCount: 3,
+                Matcher: { HttpCode: "200-399" },
+                Tags: [
+                  { Key: "shipora:managed-by", Value: "shipora" },
+                  { Key: "shipora:project-id", Value: input.projectId },
+                ],
+              })
+            );
+            targetGroupArn = createTgRes.TargetGroups?.[0]?.TargetGroupArn;
+          } catch (tgErr: unknown) {
+            console.warn(`[AwsAdapter] Could not pre-create target group: ${(tgErr as Error).message}`);
+          }
         }
       }
 
@@ -537,8 +553,8 @@ fi`,
         ? [
             {
               targetGroupArn,
-              containerName: "main",
-              containerPort: input.port,
+              containerName: input.serviceName,
+              containerPort: port,
             },
           ]
         : undefined;
@@ -599,14 +615,21 @@ fi`,
   }
 
   public async configureIngress(input: ConfigureIngressInput): Promise<ConfigureIngressResult> {
-    const targetGroupName = `${this.appName}-${input.serviceName}-tg`.slice(0, 32);
+    const port = input.port || 80;
+    const targetGroupName = `${this.appName}-${input.serviceName}-${port}-tg`.slice(0, 32);
     const listenerArn =
       process.env["ALB_HTTP_LISTENER_ARN"] ||
       `arn:aws:elasticloadbalancing:${this.region}:${this.accountId}:listener/app/${this.appName}-alb/1234567890abcdef/1234567890abcdef`;
     const vpcId = process.env["VPC_ID"] || "vpc-12345678";
     const baseDomain = process.env["SHIPORA_BASE_DOMAIN"] || "shipora.app";
     const domainPrefix = input.domainPrefix || `${input.serviceName}-${input.projectId.slice(0, 8)}`;
-    const serviceUrl = `https://${domainPrefix}.${baseDomain}`;
+    const albDnsName = process.env["ALB_DNS_NAME"];
+
+    const vanityUrl = `https://${domainPrefix}.${baseDomain}`;
+    // In environments where custom domain DNS is not configured, prioritize direct ALB DNS URL for live access
+    const serviceUrl = this.isReal && albDnsName && (!process.env["SHIPORA_BASE_DOMAIN"] || process.env["SHIPORA_BASE_DOMAIN"] === "shipora.app")
+      ? `http://${albDnsName}`
+      : vanityUrl;
 
     console.log(`[AwsAdapter] Configuring ALB routing for service '${input.serviceName}' -> ${serviceUrl}`);
 
@@ -615,27 +638,37 @@ fi`,
       return {
         success: true,
         serviceName: input.serviceName,
-        serviceUrl,
+        serviceUrl: vanityUrl,
         ingressResourceId: mockTgArn,
       };
     }
 
     try {
       const client = new ElasticLoadBalancingV2Client({ region: this.region, credentials: this.getClientCredentials() });
+      const isWebService = port === 80 || input.serviceName === "web" || input.serviceName === "main";
+      const healthCheckPath = isWebService ? "/" : "/health";
       let targetGroupArn = "";
       try {
         const describeRes = await client.send(new DescribeTargetGroupsCommand({ Names: [targetGroupName] }));
         targetGroupArn = describeRes.TargetGroups?.[0]?.TargetGroupArn || "";
-        
-        // Ensure existing target groups use the correct health check path
-        if (targetGroupArn) {
-          await client.send(new ModifyTargetGroupCommand({
-            TargetGroupArn: targetGroupArn,
-            HealthCheckPath: "/health"
-          }));
-        }
       } catch {
-        targetGroupArn = "";
+        // Fallback to legacy target group name if port-specific wasn't found
+        try {
+          const legacyTgName = `${this.appName}-${input.serviceName}-tg`.slice(0, 32);
+          const legacyRes = await client.send(new DescribeTargetGroupsCommand({ Names: [legacyTgName] }));
+          targetGroupArn = legacyRes.TargetGroups?.[0]?.TargetGroupArn || "";
+        } catch {
+          targetGroupArn = "";
+        }
+      }
+
+      // Ensure existing target groups use the correct health check path and matcher
+      if (targetGroupArn) {
+        await client.send(new ModifyTargetGroupCommand({
+          TargetGroupArn: targetGroupArn,
+          HealthCheckPath: healthCheckPath,
+          Matcher: { HttpCode: "200-399" },
+        }));
       }
 
       if (!targetGroupArn) {
@@ -643,14 +676,15 @@ fi`,
           new CreateTargetGroupCommand({
             Name: targetGroupName,
             Protocol: "HTTP",
-            Port: input.port,
+            Port: port,
             VpcId: vpcId,
             TargetType: "ip",
             HealthCheckProtocol: "HTTP",
-            HealthCheckPath: "/health",
+            HealthCheckPath: healthCheckPath,
             HealthCheckIntervalSeconds: 15,
             HealthyThresholdCount: 2,
             UnhealthyThresholdCount: 3,
+            Matcher: { HttpCode: "200-399" },
             Tags: [
               { Key: "shipora:managed-by", Value: "shipora" },
               { Key: "shipora:project-id", Value: input.projectId },
@@ -661,6 +695,11 @@ fi`,
       }
 
       try {
+        const hostValues = [`${domainPrefix}.${baseDomain}`];
+        if (albDnsName && !hostValues.includes(albDnsName)) {
+          hostValues.push(albDnsName);
+        }
+
         await client.send(
           new CreateRuleCommand({
             ListenerArn: listenerArn,
@@ -669,7 +708,7 @@ fi`,
               {
                 Field: "host-header",
                 HostHeaderConfig: {
-                  Values: [`${domainPrefix}.${baseDomain}`],
+                  Values: hostValues,
                 },
               },
             ],

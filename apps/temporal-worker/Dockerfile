@@ -16,33 +16,23 @@ COPY packages/code-analyzer/package.json      ./packages/code-analyzer/package.j
 COPY apps/temporal-worker/package.json        ./apps/temporal-worker/package.json
 
 RUN corepack enable && corepack prepare pnpm@latest --activate
-RUN pnpm install --frozen-lockfile
+RUN pnpm install --frozen-lockfile --shamefully-hoist
 
-# ─── Stage 2: Builder ──────────────────────────────────────────────────────
-FROM node:20-alpine AS builder
-WORKDIR /app
-
-COPY --from=deps /app/node_modules ./node_modules
-COPY . .
-
-RUN corepack enable && corepack prepare pnpm@latest --activate
-RUN pnpm --filter @shipora/types build 2>/dev/null || true
-RUN pnpm --filter @shipora/db build 2>/dev/null || true
-
-# ─── Stage 3: Production runner ────────────────────────────────────────────
+# ─── Stage 2: Production runner ────────────────────────────────────────────
 FROM node:20-alpine AS runner
 WORKDIR /app
 
 ENV NODE_ENV=production
+ENV PATH="/app/node_modules/.bin:${PATH}"
 
 # Copy dependencies and sources
 COPY --from=deps    /app/node_modules                 ./node_modules
-COPY --from=builder /app/apps/temporal-worker         ./apps/temporal-worker
-COPY --from=builder /app/packages/types               ./packages/types
-COPY --from=builder /app/packages/db                  ./packages/db
-COPY --from=builder /app/packages/cloud-adapters      ./packages/cloud-adapters
-COPY --from=builder /app/packages/github-app          ./packages/github-app
-COPY --from=builder /app/packages/code-analyzer       ./packages/code-analyzer
-COPY --from=builder /app/packages/temporal-workflows  ./packages/temporal-workflows
+COPY                ./apps/temporal-worker            ./apps/temporal-worker
+COPY                ./packages/types                  ./packages/types
+COPY                ./packages/db                     ./packages/db
+COPY                ./packages/cloud-adapters         ./packages/cloud-adapters
+COPY                ./packages/github-app             ./packages/github-app
+COPY                ./packages/code-analyzer          ./packages/code-analyzer
+COPY                ./packages/temporal-workflows     ./packages/temporal-workflows
 
-CMD ["node", "--loader", "tsx/esm", "apps/temporal-worker/src/index.ts"]
+CMD ["tsx", "apps/temporal-worker/src/index.ts"]

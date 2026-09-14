@@ -16,11 +16,12 @@ COPY packages/cloud-adapters/package.json ./packages/cloud-adapters/package.json
 COPY packages/temporal-workflows/package.json ./packages/temporal-workflows/package.json
 COPY packages/github-app/package.json   ./packages/github-app/package.json
 COPY packages/code-analyzer/package.json ./packages/code-analyzer/package.json
+COPY apps/api/package.json              ./apps/api/package.json
 COPY apps/web/package.json              ./apps/web/package.json
 
 # Install pnpm and all dependencies
 RUN corepack enable && corepack prepare pnpm@latest --activate
-RUN pnpm install --frozen-lockfile
+RUN pnpm install --frozen-lockfile --shamefully-hoist
 
 # ─── Stage 2: Builder ──────────────────────────────────────────────────────
 FROM node:20-alpine AS builder

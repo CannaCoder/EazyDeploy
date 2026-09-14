@@ -231,6 +231,29 @@ Shipora is powered by a set of specialized agents running as Temporal activities
 | **Log Streaming Agent** | Real-time log forwarding to dashboard via SSE |
 | **Secret Sync Agent** | Syncs secrets from AWS Secrets Manager to ECS |
 
+### 🧪 End-to-End Deployment Test Agent
+
+Shipora includes an automated deployment test agent (`scripts/test-deploy-agent.ts`) for validating cloud integrations against pre-approved test repositories:
+
+```bash
+# Validate AWS deployment (ECS demo app)
+pnpm test:deploy:aws
+
+# Validate Azure deployment (Voting app)
+pnpm test:deploy:azure
+
+# Dry run (checks credentials & API connectivity without triggering deploy)
+pnpm test:deploy:aws --dry-run
+pnpm test:deploy:azure --dry-run
+```
+
+**Protocol Behavior:**
+1. **Pre-flight**: Verifies required cloud credentials (`AWS` or `Azure`) from `.env`.
+2. **Orchestration**: Configures project record and triggers the deployment workflow via tRPC.
+3. **Polling**: Tracks live stage progress every 10 seconds (max 20 minutes).
+4. **On PASS**: Performs an HTTP `GET` smoke test against the live endpoint (verifying `HTTP 200 OK`) and reports the live URL.
+5. **On FAIL**: Automatically generates a `/decompose` incident report in `experiments/decompose/<date-slug>/` with `tree.md`, `runs.jsonl`, `learnings.md`, and `handoff.md` containing root cause and surgical fix paths.
+
 ---
 
 ## Roadmap

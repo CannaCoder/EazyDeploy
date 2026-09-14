@@ -409,13 +409,16 @@ export async function deployWorkflow(
       connectionId,
     });
 
+    const explicitPort = input.envVars?.["PORT"] ? parseInt(input.envVars["PORT"], 10) : undefined;
+    const resolvedPort = explicitPort || service.port || (provider === "azure" ? 80 : 3000);
+
     // 5b. Provision compute workload
     const provisionRes = await provisionServiceActivity({
       projectId: input.projectId,
       deploymentId: input.deploymentId,
       serviceName: service.name,
       serviceType: service.type,
-      port: service.port || 3000,
+      port: resolvedPort,
       imageUri,
       secretRefs: secretPushRes.secretRefs || secretPushRes.taskEnvSecretRefs || [],
       cloudProvider: provider,
@@ -457,11 +460,14 @@ export async function deployWorkflow(
     if (service.type === "static") continue; // Already configured during static deployment
 
     const prov = provisionedServices.find((p) => p.serviceName === service.name);
+    const explicitPort = input.envVars?.["PORT"] ? parseInt(input.envVars["PORT"], 10) : undefined;
+    const resolvedPort = explicitPort || service.port || (provider === "azure" ? 80 : 3000);
+
     const ingressRes: ConfigureIngressActivityResult = await configureIngressActivity({
       projectId: input.projectId,
       deploymentId: input.deploymentId,
       serviceName: service.name,
-      port: service.port || 3000,
+      port: resolvedPort,
       cloudServiceId: prov?.cloudServiceId || prov?.ecsServiceArn || "",
       domainPrefix: `${service.name}-${input.repoName.toLowerCase()}`,
       cloudProvider: provider,

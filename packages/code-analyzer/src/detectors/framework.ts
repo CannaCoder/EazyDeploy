@@ -17,16 +17,21 @@ export function detectServices(files: (string | RepoFile)[]): DetectedService[] 
   const handledRoots = new Set<string>();
 
   // Helper to extract service directory
+  // Helper to extract service directory
   function getRootDirectory(filePath: string): string {
     const parts = filePath.split("/");
     if (parts.length > 1 && (parts[0] === "apps" || parts[0] === "services")) {
       return `${parts[0]}/${parts[1]}`;
+    }
+    if (parts.length > 1 && (parts[parts.length - 1] === "Dockerfile" || parts[parts.length - 1] === "package.json")) {
+      return parts.slice(0, -1).join("/");
     }
     return ".";
   }
 
   // Find all candidate service directories
   const candidateRoots = new Set<string>();
+  candidateRoots.add(".");
   for (const path of filePaths) {
     candidateRoots.add(getRootDirectory(path));
   }
@@ -100,7 +105,33 @@ export function detectServices(files: (string | RepoFile)[]): DetectedService[] 
       continue;
     }
 
-    // 4. FastAPI / Python
+    // 4. Dockerfile (explicit container definition)
+    const hasDockerfile = rootFiles.some((p) => p.endsWith("Dockerfile"));
+    if (hasDockerfile) {
+      const dockerfilePath = root === "." ? "Dockerfile" : `${root}/Dockerfile`;
+      const dockerfileContent = fileMap.get(dockerfilePath);
+      let detectedPort = 80;
+      if (dockerfileContent) {
+        const match = dockerfileContent.match(/EXPOSE\s+(\d+)/i);
+        if (match && match[1]) detectedPort = parseInt(match[1], 10);
+        else if (dockerfileContent.includes("3000")) detectedPort = 3000;
+        else if (dockerfileContent.includes("8000")) detectedPort = 8000;
+        else if (dockerfileContent.includes("4000")) detectedPort = 4000;
+      }
+
+      services.push({
+        name: rootName,
+        type: "docker",
+        rootPath: root,
+        port: detectedPort,
+        buildCommand: `docker build -t ${rootName} ${root}`,
+        envVars: [],
+      });
+      handledRoots.add(root);
+      continue;
+    }
+
+    // 5. FastAPI / Python
     const isPython = rootFiles.some(
       (p) => p.endsWith("requirements.txt") || p.endsWith("pyproject.toml") || p.endsWith("Pipfile") || p.endsWith("main.py")
     );
@@ -111,29 +142,6 @@ export function detectServices(files: (string | RepoFile)[]): DetectedService[] 
         rootPath: root,
         port: 8000,
         buildCommand: "pip install -r requirements.txt",
-        envVars: [],
-      });
-      handledRoots.add(root);
-      continue;
-    }
-
-    // 5. Dockerfile
-    const hasDockerfile = rootFiles.some((p) => p.endsWith("Dockerfile"));
-    if (hasDockerfile) {
-      const dockerfilePath = root === "." ? "Dockerfile" : `${root}/Dockerfile`;
-      const dockerfileContent = fileMap.get(dockerfilePath);
-      let detectedPort = 3000;
-      if (dockerfileContent) {
-        const match = dockerfileContent.match(/EXPOSE\s+(\d+)/i);
-        if (match && match[1]) detectedPort = parseInt(match[1], 10);
-      }
-
-      services.push({
-        name: rootName,
-        type: "docker",
-        rootPath: root,
-        port: detectedPort,
-        buildCommand: `docker build -t ${rootName} ${root}`,
         envVars: [],
       });
       handledRoots.add(root);

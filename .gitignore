@@ -42,3 +42,6 @@ coverage/
 infra/aws-cdk/cdk.out/
 infra/aws-cdk/*.js
 infra/aws-cdk/*.d.ts
+
+# Scratch / Local debug scripts
+scratch/
