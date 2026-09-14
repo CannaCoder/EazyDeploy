@@ -1,6 +1,6 @@
 # EazyDeploy — Project Status & Master Checklist
 
-> **Last updated:** 2026-09-14
+> **Last updated:** 2026-09-15
 > **Goal:** Complete the platform to production-readiness (NOT deployment yet — product completion first)
 > **Rule:** Only touch the exact file needed. Verify every change twice. No unnecessary code. Act as senior developer at all times on any coding/architecture question.
 
@@ -29,8 +29,8 @@
 - [x] **1.4** Add GitHub deployment environment + status reporting (pass/fail visible on PR)
 - [x] **1.5** Document all required GitHub Actions secrets that must be set in repo settings
 - [x] **1.6** Wire CD to trigger only after CI (`ci.yml`) passes (`workflow_run` on CI success + `workflow_dispatch`)
-- [/] **1.7** Test the pipeline end-to-end with a real push — confirm images in ECR and ECS tasks update
-- [ ] **1.8** Confirm ALB health check passes after deploy
+- [x] **1.7** Test the pipeline end-to-end with a real push — confirm images in ECR and ECS tasks update
+- [x] **1.8** Confirm ALB health check passes after deploy
 
 ---
 
