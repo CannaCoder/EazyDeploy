@@ -42,3 +42,35 @@ jobs:
 
       - name: Build
         run: pnpm build
+
+  e2e:
+    name: Playwright E2E Tests
+    runs-on: ubuntu-latest
+    needs: ci
+    env:
+      CI: true
+      NODE_ENV: test
+      ENCRYPTION_KEY: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+      DATABASE_URL: ${{ secrets.DATABASE_URL_TEST || 'postgresql://postgres:postgres@localhost:5432/shipora_test' }}
+      GITHUB_APP_WEBHOOK_SECRET: 'ci-test-webhook-secret'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Install Playwright Chromium
+        run: pnpm --filter web exec playwright install --with-deps chromium
+
+      - name: Run Playwright E2E tests
+        run: pnpm --filter web test:e2e

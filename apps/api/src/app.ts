@@ -1,6 +1,7 @@
 import Fastify, { type FastifyInstance } from "fastify";
 import cors from "@fastify/cors";
 import rawBody from "fastify-raw-body";
+import { clerkPlugin } from "@clerk/fastify";
 import { fastifyTRPCPlugin } from "@trpc/server/adapters/fastify";
 import { appRouter } from "./trpc/routers/index.js";
 import { createContext } from "./trpc/context.js";
@@ -17,14 +18,72 @@ import { rollbackRoutes } from "./routes/rollback.js";
 import { previewRoutes } from "./routes/preview.js";
 
 
+import { env } from "./env.js";
+
 export async function buildApp(opts?: { logger?: boolean }): Promise<FastifyInstance> {
   const app = Fastify({
     logger: opts?.logger ?? false,
   });
 
-  // Enable CORS
+  // Register Clerk plugin for Fastify auth decoration when Clerk keys are configured
+  const publishableKey = process.env["CLERK_PUBLISHABLE_KEY"] || process.env["NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY"];
+  const secretKey = process.env["CLERK_SECRET_KEY"];
+
+  if (publishableKey && secretKey) {
+    await app.register(clerkPlugin, {
+      publishableKey,
+      secretKey,
+    });
+  }
+
+  // Enable CORS with strict origin validation
+  const isDev = env.NODE_ENV !== "production";
   await app.register(cors, {
-    origin: true,
+    origin: (origin, cb) => {
+      // Allow requests with no origin (curl, server-to-server, health check probes)
+      if (!origin) return cb(null, true);
+
+      // In development or test, allow any localhost origin
+      if (isDev && (/^http:\/\/localhost:\d+$/.test(origin) || /^http:\/\/127\.0\.0\.1:\d+$/.test(origin))) {
+        return cb(null, true);
+      }
+
+      const allowedOrigins = [
+        env.WEB_DASHBOARD_URL,
+        "https://shipora.app",
+        "https://www.shipora.app",
+      ].filter(Boolean);
+
+      // Support additional comma-separated origins from CORS_ORIGINS env var
+      const extra = (process.env["CORS_ORIGINS"] || "")
+        .split(",")
+        .map((s) => s.trim())
+        .filter(Boolean);
+      const allAllowed = [...allowedOrigins, ...extra];
+
+      let isAllowed = allAllowed.some((allowed) => {
+        try {
+          return new URL(origin).origin === new URL(allowed).origin;
+        } catch {
+          return origin === allowed;
+        }
+      });
+
+      if (!isAllowed) {
+        try {
+          const { hostname } = new URL(origin);
+          isAllowed = hostname === "shipora.app" || hostname.endsWith(".shipora.app");
+        } catch {
+          isAllowed = false;
+        }
+      }
+
+      if (isAllowed) {
+        return cb(null, true);
+      }
+
+      return cb(new Error("CORS policy: origin not allowed"), false);
+    },
     credentials: true,
   });
 

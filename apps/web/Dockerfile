@@ -37,6 +37,12 @@ COPY . .
 # Enable standalone output (smaller Docker image)
 ENV NEXT_TELEMETRY_DISABLED=1
 
+# Next.js build-time public variables (inlined into client bundle)
+ARG NEXT_PUBLIC_API_URL
+ARG NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY
+ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
+ENV NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=$NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY
+
 # Build the web app only
 RUN corepack enable && corepack prepare pnpm@latest --activate
 RUN pnpm --filter web build

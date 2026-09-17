@@ -91,6 +91,9 @@ jobs:
           context: .
           file: ${{ matrix.dockerfile }}
           push: true
+          build-args: |
+            NEXT_PUBLIC_API_URL=http://${{ secrets.ALB_DNS_NAME }}
+            NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=${{ secrets.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY }}
           tags: |
             ${{ secrets.ECR_REGISTRY }}/shipora-services:${{ matrix.image_suffix }}-sha-${{ env.DEPLOY_SHA }}
             ${{ secrets.ECR_REGISTRY }}/shipora-services:${{ matrix.image_suffix }}-latest

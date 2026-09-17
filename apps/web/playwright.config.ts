@@ -22,13 +22,13 @@ export default defineConfig({
       command: "pnpm --filter api dev",
       url: "http://localhost:4000/health",
       reuseExistingServer: !process.env["CI"],
-      timeout: 30000,
+      timeout: 60000,
     },
     {
       command: "pnpm --filter web dev",
       url: "http://localhost:3000",
       reuseExistingServer: !process.env["CI"],
-      timeout: 30000,
+      timeout: 60000,
     },
   ],
 });

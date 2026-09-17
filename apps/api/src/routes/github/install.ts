@@ -73,8 +73,9 @@ export const githubInstallRoutes: FastifyPluginAsync = async (fastify) => {
       Accept: "application/vnd.github.v3+json",
     };
 
-    if (token && token.trim()) {
-      headers["Authorization"] = `Bearer ${token.trim()}`;
+    const effectiveToken = (token && token.trim()) || process.env["GITHUB_TOKEN"];
+    if (effectiveToken && effectiveToken.trim()) {
+      headers["Authorization"] = `Bearer ${effectiveToken.trim()}`;
     }
 
     try {

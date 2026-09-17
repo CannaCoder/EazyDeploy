@@ -12,6 +12,8 @@
     "test:deploy:aws": "pnpm dlx tsx scripts/test-deploy-agent.ts --provider=aws",
     "test:deploy:azure": "pnpm dlx tsx scripts/test-deploy-agent.ts --provider=azure",
     "clean": "turbo run clean && rm -rf node_modules",
+    "db:migrate": "pnpm --filter @shipora/db db:migrate",
+    "db:push": "pnpm --filter @shipora/db db:push",
     "temporal": "temporal server start-dev --ui-port 8233",
     "format": "prettier --write \"**/*.{ts,tsx,js,jsx,json,md}\""
   },

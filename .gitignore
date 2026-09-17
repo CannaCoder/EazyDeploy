@@ -34,6 +34,8 @@ Thumbs.db
 
 # Testing
 coverage/
+playwright-report/
+test-results/
 
 # Temporal
 .temporal/

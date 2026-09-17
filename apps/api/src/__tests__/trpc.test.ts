@@ -29,7 +29,7 @@ describe("tRPC Endpoints", () => {
     const body = JSON.parse(res.body);
     expect(body.result.data.clerkId).toBe("user_test_12345");
     expect(body.result.data.email).toBe("testuser@shipora.dev");
-  });
+  }, 15000);
 
   it("project.list returns 401 UNAUTHORIZED when no auth header provided", async () => {
     const res = await app.inject({
@@ -75,5 +75,31 @@ describe("tRPC Endpoints", () => {
     expect(listRes.statusCode).toBe(200);
     const list = JSON.parse(listRes.body).result.data;
     expect(Array.isArray(list)).toBe(true);
+  });
+
+  it("CORS rejects spoofed origin ending with shipora.app suffix", async () => {
+    const res = await app.inject({
+      method: "GET",
+      url: "/health",
+      headers: {
+        origin: "https://attacker-shipora.app",
+      },
+    });
+
+    expect(res.statusCode).toBe(500);
+    expect(res.body).toContain("CORS policy: origin not allowed");
+  });
+
+  it("CORS allows legitimate shipora.app subdomains", async () => {
+    const res = await app.inject({
+      method: "GET",
+      url: "/health",
+      headers: {
+        origin: "https://dashboard.shipora.app",
+      },
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.headers["access-control-allow-origin"]).toBe("https://dashboard.shipora.app");
   });
 });

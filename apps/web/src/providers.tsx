@@ -59,10 +59,28 @@ export function Providers({ children }: { children: ReactNode }) {
       links: [
         httpBatchLink({
           url: `${process.env["NEXT_PUBLIC_API_URL"] || "http://localhost:4000"}/trpc`,
-          headers() {
-            return {
-              authorization: "Bearer test_user_developer_1",
-            };
+          async headers() {
+            if (typeof window !== "undefined" && (window as any).Clerk?.session) {
+              try {
+                const token = await (window as any).Clerk.session.getToken();
+                if (token) {
+                  return {
+                    authorization: `Bearer ${token}`,
+                  };
+                }
+              } catch {
+                // Fallback
+              }
+            }
+
+            // In development or test environments, fallback to mock developer token
+            if (process.env.NODE_ENV !== "production") {
+              return {
+                authorization: "Bearer test_user_developer_1",
+              };
+            }
+
+            return {};
           },
         }),
       ],

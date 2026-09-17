@@ -1,6 +1,6 @@
 # EazyDeploy — Project Status & Master Checklist
 
-> **Last updated:** 2026-09-15
+> **Last updated:** 2026-09-17
 > **Goal:** Complete the platform to production-readiness (NOT deployment yet — product completion first)
 > **Rule:** Only touch the exact file needed. Verify every change twice. No unnecessary code. Act as senior developer at all times on any coding/architecture question.
 
@@ -8,13 +8,13 @@
 
 ## 🔴 Blockers (security — rotate before doing anything else)
 
-- [ ] Rotate Clerk Secret Key (committed in `.env`)
-- [ ] Rotate GitHub App Private Key (committed in `.env`)
-- [ ] Rotate AWS Access Key + Secret Key (committed in `.env`)
-- [ ] Rotate Temporal API Key (committed in `.env`)
-- [ ] Rotate Azure Client Secret (committed in `.env`)
-- [ ] Rotate GCP Client Secret (committed in `.env`)
-- [ ] Rotate Upstash Redis token (committed in `.env`)
+- [x] Rotate Clerk Secret Key (committed in `.env`)
+- [x] Rotate GitHub App Private Key (committed in `.env`)
+- [x] Rotate AWS Access Key + Secret Key (committed in `.env`)
+- [x] Rotate Temporal API Key (committed in `.env`)
+- [x] Rotate Azure Client Secret (committed in `.env`)
+- [~] Rotate GCP Client Secret (deferred — GCP not needed for current scope)
+- [x] Rotate Upstash Redis token (committed in `.env`)
 - [x] Add `.env` to `.gitignore`
 
 ---
@@ -75,7 +75,7 @@
 
 - [x] **4.1** Design test agent workflow and assertion checklist
 - [x] **4.2** Build the test agent (`scripts/test-deploy-agent.ts`)
-- [x] **4.3** Test with AWS cloud connector full flow (Verified: `b157e5ff-bda0-4214-a61f-49072cd437c5` → HTTP 200 on live ALB)
+- [x] **4.3** Test with AWS cloud connector full flow (Verified post-rotation: `34a3928d-5f54-4230-bbf8-eb3d62ed23c2` → HTTP 200 on live ALB in 432ms)
 - [x] **4.4** Test with Azure cloud connector full flow (Verified: `94f2fe78-659b-4ccb-8371-7738583170eb` → HTTP 200 on live Azure Container App)
 - [x] **4.5** On pass: smoke-test live URL, report back to user
 - [x] **4.6** On fail: run `/decompose`, generate `experiments/decompose/<slug>/handoff.md`
@@ -83,13 +83,15 @@
 
 ---
 
-## Phase 5 — Remaining Pre-Launch Hardening (Deferred)
+## Phase 5 — Pre-Launch Hardening
 
-- [ ] **5.1** Lock CORS to production domain in `apps/api/src/app.ts`
-- [ ] **5.2** Set `NEXT_PUBLIC_API_URL` to production URL (env, not code)
-- [ ] **5.3** Update all OAuth redirect URIs to production URLs
-- [ ] **5.4** Add E2E Playwright job to CI workflow
-- [ ] **5.5** Inject secrets via AWS Secrets Manager (not `.env` file)
+- [x] **5.1** Lock CORS to production domain in `apps/api/src/app.ts` (strict hostname validation: `WEB_DASHBOARD_URL`, `shipora.app`, `*.shipora.app`, `CORS_ORIGINS`; hardened against origin suffix spoofing)
+- [x] **5.2** Set `NEXT_PUBLIC_API_URL` to production URL (supported build args in `apps/web/Dockerfile`, dynamic Clerk token in `apps/web/src/providers.tsx` with dev fallback)
+- [~] **5.3** Update all OAuth redirect URIs to production URLs (deferred till final public domain DNS is bound)
+- [x] **5.4** Add E2E Playwright job to CI workflow (`.github/workflows/ci.yml` + verified 3/3 tests pass)
+- [~] **5.5** Inject secrets via AWS Secrets Manager (deferred to live cloud ECS task definition provisioning)
+- [x] **5.6** Secure `createContext` with Clerk `verifyToken` & restrict `test_user_` tokens to `NODE_ENV !== "production"`
+- [x] **5.7** Document `ENCRYPTION_KEY` in `.env.example` & add `db:migrate` / `db:push` scripts to root `package.json`
 
 ---
 
