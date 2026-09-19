@@ -1,8 +1,9 @@
 # EazyDeploy — Project Status & Master Checklist
 
-> **Last updated:** 2026-09-17
+> **Last updated:** 2026-09-20
 > **Goal:** Complete the platform to production-readiness (NOT deployment yet — product completion first)
 > **Rule:** Only touch the exact file needed. Verify every change twice. No unnecessary code. Act as senior developer at all times on any coding/architecture question.
+> **Pipeline Status:** Fully operational. CI (`ci.yml`) & CD (`deploy.yml`) verified green end-to-end on AWS ECS Fargate & ALB.
 
 ---
 
