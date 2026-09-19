@@ -39,13 +39,17 @@ export const metadata: Metadata = {
   },
 };
 
+const clerkPublishableKey =
+  process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY ||
+  "pk_test_Zmx5aW5nLXN1bmJlYW0tNjM5NC5jbGVyay5hY2NvdW50cy5kZXYk";
+
 export default function RootLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
   return (
-    <ClerkProvider dynamic>
+    <ClerkProvider publishableKey={clerkPublishableKey} dynamic>
       <html lang="en" className={`dark ${inter.variable} ${jetbrainsMono.variable}`}>
         <body className="min-h-screen bg-background font-sans text-foreground antialiased selection:bg-emerald-500/20 selection:text-emerald-300">
           <Providers>{children}</Providers>
