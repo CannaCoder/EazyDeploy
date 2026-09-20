@@ -47,6 +47,18 @@ async function main() {
     // Default rule is never orphaned
     if (rule.IsDefault) continue;
 
+    // Never delete core system rules (priorities <= 100 or pointing to core services)
+    const isCoreTarget = rule.Actions?.some(a => 
+      a.TargetGroupArn?.includes("shipora-api") || 
+      a.TargetGroupArn?.includes("shipora-web") || 
+      a.TargetGroupArn?.includes("shipora-main")
+    );
+    const numPriority = Number(rule.Priority);
+    if (isCoreTarget || (!isNaN(numPriority) && numPriority <= 100)) {
+      console.log(`    → PROTECTED (core system rule priority ${rule.Priority})`);
+      continue;
+    }
+
     // Try to get tags to check if CFN-managed (CFN adds aws:cloudformation:stack-name tag)
     const { TagDescriptions = [] } = await client.send(
       new DescribeTagsCommand({ ResourceArns: [rule.RuleArn!] })

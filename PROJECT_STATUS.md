@@ -114,3 +114,9 @@
 - **ECS Cluster:** `arn:aws:ecs:eu-north-1:690990575414:cluster/shipora-cluster`
 - **CodeBuild project:** `shipora-container-builder`
 - **Apps in scope for CD:** `apps/api`, `apps/web`, `apps/temporal-worker`
+- **Frontend Stack (CDK):** `ShiporaWebServiceStack` deployed and active. Next.js standalone container on ECS Fargate (`shipora-web`) routed via ALB at priority 100 with static asset delivery verified HTTP 200.
+- **ALB Routing Verified:**
+  - `GET /` → `shipora-web` (HTTP 200, Next.js HTML)
+  - `GET /_next/static/*` → `shipora-web` (HTTP 200, Static assets)
+  - `GET /health` → `shipora-api` (HTTP 200, API service status ok)
+  - `ANY /trpc/*`, `/webhooks/*`, `/github/*` → `shipora-api` (Priorities 10, 20, 30)

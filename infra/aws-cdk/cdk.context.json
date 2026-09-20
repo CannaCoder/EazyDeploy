@@ -3,5 +3,64 @@
     "eu-north-1a",
     "eu-north-1b",
     "eu-north-1c"
-  ]
+  ],
+  "vpc-provider:account=690990575414:filter.tag:Name=shipora-vpc:region=eu-north-1:returnAsymmetricSubnets=true": {
+    "vpcId": "vpc-0d2af61065462fb6e",
+    "vpcCidrBlock": "10.0.0.0/16",
+    "ownerAccountId": "690990575414",
+    "availabilityZones": [],
+    "subnetGroups": [
+      {
+        "name": "Private",
+        "type": "Private",
+        "subnets": [
+          {
+            "subnetId": "subnet-0cf814c3aa8c4c4bb",
+            "cidr": "10.0.2.0/24",
+            "availabilityZone": "eu-north-1a",
+            "routeTableId": "rtb-06644b74d3412ef54"
+          },
+          {
+            "subnetId": "subnet-0b26c97153d95ffe0",
+            "cidr": "10.0.3.0/24",
+            "availabilityZone": "eu-north-1b",
+            "routeTableId": "rtb-02d472ee5ef6003ca"
+          }
+        ]
+      },
+      {
+        "name": "Public",
+        "type": "Public",
+        "subnets": [
+          {
+            "subnetId": "subnet-046c394a1a607f6db",
+            "cidr": "10.0.0.0/24",
+            "availabilityZone": "eu-north-1a",
+            "routeTableId": "rtb-05b03c718158a9e20"
+          },
+          {
+            "subnetId": "subnet-050f2bf2bc7787468",
+            "cidr": "10.0.1.0/24",
+            "availabilityZone": "eu-north-1b",
+            "routeTableId": "rtb-0bff5f72a7e064103"
+          }
+        ]
+      }
+    ]
+  },
+  "load-balancer-listener:account=690990575414:listenerArn=arn$:aws$:elasticloadbalancing$:eu-north-1$:690990575414$:listener/app/shipora-alb/e3a54fd0f9d6c44e/8a166fd107901e42:loadBalancerType=application:region=eu-north-1": {
+    "listenerArn": "arn:aws:elasticloadbalancing:eu-north-1:690990575414:listener/app/shipora-alb/e3a54fd0f9d6c44e/8a166fd107901e42",
+    "listenerPort": 80,
+    "securityGroupIds": [
+      "sg-06f2d95ebe60bace2"
+    ]
+  },
+  "security-group:account=690990575414:region=eu-north-1:securityGroupName=shipora-ecs-sg:vpcId=vpc-0d2af61065462fb6e": {
+    "securityGroupId": "sg-0a43979da73f0921a",
+    "allowAllOutbound": false
+  },
+  "security-group:account=690990575414:region=eu-north-1:securityGroupId=sg-06f2d95ebe60bace2": {
+    "securityGroupId": "sg-06f2d95ebe60bace2",
+    "allowAllOutbound": false
+  }
 }

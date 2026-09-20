@@ -91,13 +91,6 @@ export class WebServiceStack extends cdk.Stack {
         logGroup,
         streamPrefix: "web",
       }),
-      healthCheck: {
-        command: ["CMD-SHELL", "wget -qO- http://localhost:3000/ || exit 1"],
-        interval: cdk.Duration.seconds(30),
-        timeout: cdk.Duration.seconds(10),
-        retries: 3,
-        startPeriod: cdk.Duration.seconds(60),
-      },
     });
 
     // ── ALB Target Group ──────────────────────────────────────────────────────
@@ -137,6 +130,7 @@ export class WebServiceStack extends cdk.Stack {
       securityGroups: [ecsSecurityGroup],
       circuitBreaker: { rollback: true },
       deploymentController: { type: ecs.DeploymentControllerType.ECS },
+      healthCheckGracePeriod: cdk.Duration.seconds(120),
     });
 
     service.attachToApplicationTargetGroup(targetGroup);
