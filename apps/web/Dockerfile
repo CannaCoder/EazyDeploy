@@ -61,12 +61,14 @@ RUN addgroup --system --gid 1001 nodejs && \
     adduser  --system --uid 1001 nextjs
 
 # Copy public assets and the standalone build
-COPY --from=builder /app/apps/web/public             ./public
-COPY --from=builder --chown=nextjs:nodejs /app/apps/web/.next/standalone ./
-COPY --from=builder --chown=nextjs:nodejs /app/apps/web/.next/static     ./.next/static
+# In a pnpm monorepo, standalone output preserves the workspace path:
+# .next/standalone/apps/web/server.js  (not .next/standalone/server.js)
+COPY --from=builder /app/apps/web/public                                    ./apps/web/public
+COPY --from=builder --chown=nextjs:nodejs /app/apps/web/.next/standalone    ./
+COPY --from=builder --chown=nextjs:nodejs /app/apps/web/.next/static        ./apps/web/.next/static
 
 USER nextjs
 EXPOSE 3000
 
-# Use Next.js standalone server
-CMD ["node", "server.js"]
+# server.js is at apps/web/server.js within the standalone output
+CMD ["node", "apps/web/server.js"]
